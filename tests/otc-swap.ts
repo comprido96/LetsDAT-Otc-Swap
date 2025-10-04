@@ -12,14 +12,18 @@ import {
   TOKEN_PROGRAM_ID,
   mintTo,
   transfer,
+  getMint,
+  createAssociatedTokenAccount,
+  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
+import { SYSTEM_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/native/system";
 
 
 chai.use(chaiAsPromised);
 const expect = chai.expect;
 
 
-// describe("otc-swap: initialize", async () => {
+// describe("otc-swap: initialize", () => {
 //   const provider = anchor.AnchorProvider.local();
 //   anchor.setProvider(provider);
 
@@ -27,86 +31,85 @@ const expect = chai.expect;
 //   const admin = provider.wallet;
 //   const connection = provider.connection;
 
+
 //   // Constants
-//   const FEE_RATE_BPS = 50; // for testing
-//   const MIN_COLLATERAL_BPS = 25000; // for testing
+//   const FEE_RATE_BPS = 50; // 0.5%
+//   const MIN_COLLATERAL_BPS = 25000; // 250%
+
 
 //   let sbtcMint: PublicKey;
 //   let zbtcMint: PublicKey;
 //   let sbtcMintAuthorityPda: PublicKey;
-//   let treasuryZbtcVaultPda: PublicKey;
-//   let feeVaultPda: PublicKey;
+//   let treasuryAuthorityPda: PublicKey;
+//   let feeAuthorityPda: PublicKey;
+//   let treasuryZbtcVault: PublicKey;
+//   let feeVault: PublicKey;
 //   let configPda: PublicKey;
 
-//   // Helper function to derive PDAs
-//   const deriveVaultPdAs = (squadWallet: PublicKey) => {
-//     const [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("sbtc_mint_authority")],
+//   // Helper PDA derivations
+//   const derivePdas = (squadWallet: PublicKey) => {
+//     // === Derive PDAs ===
+//     [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("sbtc_mint_authority"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [treasuryPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("treasury"), squadWallet.toBuffer()],
+//     [treasuryAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("treasury_auth_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [feePda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("fees"), squadWallet.toBuffer()],
+//     [feeAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("fee_auth_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [configPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("config"), squadWallet.toBuffer()],
+//     [configPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("config_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     return {
-//       sbtcMintAuthorityPda,
-//       treasuryZbtcVaultPda: treasuryPda,
-//       feeVaultPda: feePda,
-//       configPda,
-//     };
+//     return { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda };
 //   };
 
-//   before(async () => {
-//     // === Create test mints ===
-//     sbtcMint = await createMint(
-//       connection,
-//       admin.payer,
-//       admin.publicKey, // Initial mint authority = Squad
-//       admin.publicKey, // Freeze authority = Squad
-//       9,
+// before(async () => {
+//     // === Create mints ===
+//     zbtcMint = await createMint(connection, admin.payer, admin.publicKey, null, 8);
+//     sbtcMint = await createMint(connection, admin.payer, admin.publicKey, admin.publicKey, 8);
+
+//     const { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda } = derivePdas(admin.publicKey);
+
+//     // === Create token accounts BEFORE initialize ===
+//     const treasuryAccount = await getOrCreateAssociatedTokenAccount(
+//         connection,
+//         admin.payer,
+//         zbtcMint,
+//         treasuryAuthorityPda, // PDA as owner
+//         true, // allowOwnerOffCurve - IMPORTANT for PDAs
+//         undefined, // confirmOptions
+//         undefined, // programId (uses TOKEN_PROGRAM_ID)
+//         TOKEN_PROGRAM_ID // explicitly specify token program
 //     );
+//     treasuryZbtcVault = treasuryAccount.address;
 
-//     zbtcMint = await createMint(
-//       connection,
-//       admin.payer,
-//       admin.publicKey,
-//       null,
-//       9
+//     const feeAccount = await getOrCreateAssociatedTokenAccount(
+//         connection,
+//         admin.payer,
+//         zbtcMint,
+//         feeAuthorityPda, // PDA as owner
+//         true, // allowOwnerOffCurve - IMPORTANT for PDAs
+//         undefined,
+//         undefined,
+//         TOKEN_PROGRAM_ID
 //     );
-
-//     // === Derive PDA vault addresses ===
-//     const pdas = deriveVaultPdAs(admin.publicKey);
-//     sbtcMintAuthorityPda = pdas.sbtcMintAuthorityPda;
-//     treasuryZbtcVaultPda = pdas.treasuryZbtcVaultPda;
-//     feeVaultPda = pdas.feeVaultPda;
-//     configPda = pdas.configPda;
-
-//     console.log("Admin (Squad):", admin.publicKey.toString());
-//     console.log("sBTC Mint Authority PDA:", sbtcMintAuthorityPda.toString());
-//     console.log("Treasury PDA:", treasuryZbtcVaultPda.toString());
-//     console.log("Fee PDA:", feeVaultPda.toString());
-//     console.log("Config PDA:", configPda.toString());
-//   });
-
+//     feeVault = feeAccount.address;
+// });
 //   it("Should initialize and transfer sBTC mint authority", async () => {
-//     // Verify sBTC initially owned by Squad
-//     let data = await connection.getParsedAccountInfo(sbtcMint, "confirmed");
-//     let parsedMintInfo = (data?.value?.data as ParsedAccountData)?.parsed?.info;
-//     if (parsedMintInfo) {
-//       expect(parsedMintInfo.mintAuthority===admin.publicKey);
-//     }
+//     console.log("AYO");
+
+//     // Verify sBTC initially owned by admin (squad)
+//     let mintInfo = await getMint(connection, sbtcMint);
+//     expect(mintInfo.mintAuthority?.equals(admin.publicKey)).to.be.true;
 
 //     const tx = await program.methods
 //       .initialize(
@@ -117,21 +120,28 @@ const expect = chai.expect;
 //         squadMultisig: admin.publicKey,
 //         sbtcMint: sbtcMint,
 //         zbtcMint: zbtcMint,
-//       })
+//         sbtcMintAuthorityPda: sbtcMintAuthorityPda,
+//         treasuryAuthorityPda: treasuryAuthorityPda,
+//         feeAuthorityPda: feeAuthorityPda,
+//         treasuryZbtcVault: treasuryZbtcVault,
+//         feeVault: feeVault,
+//         config: configPda,
+//         tokenProgram: TOKEN_PROGRAM_ID,
+//         systemProgram: SystemProgram.programId,
+//       } as any)
 //       .rpc();
 
-//     // Verify sBTC authority was transferred to program PDA
-//     data = await connection.getParsedAccountInfo(sbtcMint, "confirmed");
-//     parsedMintInfo = (data?.value?.data as ParsedAccountData)?.parsed?.info;
-//     if (parsedMintInfo) {
-//       expect(parsedMintInfo.mintAuthority===sbtcMintAuthorityPda);
-//     }
+//     console.log("Initialize tx:", tx);
 
-//     // Verify vaults were created by the program
-//     const treasuryAccount = await getAccount(connection, treasuryZbtcVaultPda);
-//     const feeAccount = await getAccount(connection, feeVaultPda);
-//     expect(treasuryAccount.owner.equals(treasuryZbtcVaultPda)).to.be.true;
-//     expect(feeAccount.owner.equals(feeVaultPda)).to.be.true;
+//     // Verify sBTC authority was transferred to program PDA
+//     mintInfo = await getMint(connection, sbtcMint);
+//     expect(mintInfo.mintAuthority?.equals(sbtcMintAuthorityPda)).to.be.true;
+
+//     // Verify vaults are correct
+//     const treasuryAccount = await getAccount(connection, treasuryZbtcVault);
+//     const feeAccount = await getAccount(connection, feeVault);
+//     expect(treasuryAccount.owner.equals(treasuryAuthorityPda)).to.be.true;
+//     expect(feeAccount.owner.equals(feeAuthorityPda)).to.be.true;
 //     expect(treasuryAccount.mint.equals(zbtcMint)).to.be.true;
 //     expect(feeAccount.mint.equals(zbtcMint)).to.be.true;
 
@@ -140,106 +150,125 @@ const expect = chai.expect;
 //     expect(config.squadMultisig.equals(admin.publicKey)).to.be.true;
 //     expect(config.sbtcMint.equals(sbtcMint)).to.be.true;
 //     expect(config.zbtcMint.equals(zbtcMint)).to.be.true;
-//     expect(config.treasuryZbtcVault.equals(treasuryZbtcVaultPda)).to.be.true;
-//     expect(config.feeVault.equals(feeVaultPda)).to.be.true;
-//     expect(config.sbtcMintAuthorityPda.equals(sbtcMintAuthorityPda)).to.be.true;
+//     expect(config.treasuryZbtcVault.equals(treasuryZbtcVault)).to.be.true;
+//     expect(config.feeVault.equals(feeVault)).to.be.true;
 //     expect(config.feeRateBps.toNumber()).to.equal(FEE_RATE_BPS);
 //     expect(config.minCollateralBps.toNumber()).to.equal(MIN_COLLATERAL_BPS);
+//     expect(config.paused).to.be.false;
+//     expect(config.totalSbtcOutstanding.toString()).to.equal("0");
 //   });
 // });
 
-
-// describe("otc-swap: mint sBTC", async () => {
+// describe("mint_sbtc", () => {
 //   const provider = anchor.AnchorProvider.local();
 //   anchor.setProvider(provider);
 
 //   const program = anchor.workspace.OtcSwap as Program<OtcSwap>;
-//   const admin = provider.wallet;
 //   const connection = provider.connection;
+//   const admin = provider.wallet;
 
-//   // Constants
-//   const FEE_RATE_BPS = 50; // 0.5%
-//   const MIN_COLLATERAL_BPS = 25000; // 250%
+//   let sbtcMint: anchor.web3.PublicKey;
+//   let zbtcMint: anchor.web3.PublicKey;
+//   let user: anchor.web3.Keypair;
+//   let priceAccount: anchor.web3.PublicKey;
 
-//   let sbtcMint: PublicKey;
-//   let zbtcMint: PublicKey;
-//   let sbtcMintAuthorityPda: PublicKey;
-//   let treasuryZbtcVaultPda: PublicKey;
-//   let feeVaultPda: PublicKey;
-//   let configPda: PublicKey;
+//   let userZbtcAccount: anchor.web3.PublicKey;
+//   let userSbtcAccount: anchor.web3.PublicKey;
+//   let treasuryZbtcVault: anchor.web3.PublicKey;
+//   let feeVault: anchor.web3.PublicKey;
+//   let sbtcMintAuthorityPda: anchor.web3.PublicKey;
+//   let treasuryAuthorityPda: anchor.web3.PublicKey;
+//   let feeAuthorityPda: anchor.web3.PublicKey;
+//   let configPda: anchor.web3.PublicKey;
 
-//   // Test users
-//   let user: Keypair;
-//   let userSbtcAta: PublicKey;
-//   let userZbtcAta: PublicKey;
+//   const FEE_RATE_BPS = 500; // 5%
+//   const MIN_COLLATERAL_BPS = 20000; // 200%
 
-//   // Helper function to derive PDAs
-//   const deriveVaultPdAs = (squadWallet: PublicKey) => {
-//     const [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("sbtc_mint_authority")],
+//   // Helper PDA derivations
+//   const derivePdas = (squadWallet: PublicKey) => {
+//     // === Derive PDAs ===
+//     [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("sbtc_mint_authority"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [treasuryPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("treasury"), squadWallet.toBuffer()],
+//     [treasuryAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("treasury_auth_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [feePda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("fees"), squadWallet.toBuffer()],
+//     [feeAuthorityPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("fee_auth_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     const [configPda] = PublicKey.findProgramAddressSync(
-//       [Buffer.from("config"), squadWallet.toBuffer()],
+//     [configPda] = PublicKey.findProgramAddressSync(
+//       [Buffer.from("config_v1"), admin.publicKey.toBuffer()],
 //       program.programId
 //     );
 
-//     return {
-//       sbtcMintAuthorityPda,
-//       treasuryZbtcVaultPda: treasuryPda,
-//       feeVaultPda: feePda,
-//       configPda,
-//     };
+//     return { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda };
 //   };
 
 //   before(async () => {
-//     // Create test user
-//     user = Keypair.generate();
+//     // === Create mints ===
+//     zbtcMint = await createMint(connection, admin.payer, admin.publicKey, null, 8);
+//     sbtcMint = await createMint(connection, admin.payer, admin.publicKey, admin.publicKey, 8);
 
-//     // Airdrop SOL to user
-//     const airdropSig = await connection.requestAirdrop(
-//       user.publicKey,
-//       1000000000 // 1 SOL
+//     const { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda } = derivePdas(admin.publicKey);
+
+//     // === Create token accounts BEFORE initialize ===
+//     const treasuryAccount = await getOrCreateAssociatedTokenAccount(
+//         connection,
+//         admin.payer,
+//         zbtcMint,
+//         treasuryAuthorityPda, // PDA as owner
+//         true, // allowOwnerOffCurve - IMPORTANT for PDAs
+//         undefined, // confirmOptions
+//         undefined, // programId (uses TOKEN_PROGRAM_ID)
+//         TOKEN_PROGRAM_ID // explicitly specify token program
 //     );
-//     await connection.confirmTransaction(airdropSig);
+//     treasuryZbtcVault = treasuryAccount.address;
 
-//     // === Create test mints ===
-//     sbtcMint = await createMint(
+//     const feeAccount = await getOrCreateAssociatedTokenAccount(
+//         connection,
+//         admin.payer,
+//         zbtcMint,
+//         feeAuthorityPda, // PDA as owner
+//         true, // allowOwnerOffCurve - IMPORTANT for PDAs
+//         undefined,
+//         undefined,
+//         TOKEN_PROGRAM_ID
+//     );
+//     feeVault = feeAccount.address;
+
+//     // === Create user + accounts ===
+//     user = anchor.web3.Keypair.generate();
+//     await provider.connection.requestAirdrop(user.publicKey, 2e9); // 2 SOL for tx fees
+
+//     priceAccount = anchor.web3.Keypair.generate().publicKey;
+
+//     userZbtcAccount = await createAccount(connection, admin.payer, zbtcMint, user.publicKey);
+//     userSbtcAccount = await createAccount(connection, admin.payer, sbtcMint, user.publicKey);
+
+//     // Fund user with zBTC
+//     await mintTo(
 //       connection,
 //       admin.payer,
-//       admin.publicKey, // Initial mint authority = Squad
-//       admin.publicKey, // Freeze authority = Squad
-//       9,
-//     );
-
-//     zbtcMint = await createMint(
-//       connection,
-//       admin.payer,
+//       zbtcMint,
+//       userZbtcAccount,
 //       admin.publicKey,
-//       null,
-//       9
+//       1_000_000_000 // 10 zBTC (8 decimals)
 //     );
+//   });
 
-//     // === Derive PDA vault addresses ===
-//     const pdas = deriveVaultPdAs(admin.publicKey);
-//     sbtcMintAuthorityPda = pdas.sbtcMintAuthorityPda;
-//     treasuryZbtcVaultPda = pdas.treasuryZbtcVaultPda;
-//     feeVaultPda = pdas.feeVaultPda;
-//     configPda = pdas.configPda;
+//   it("mints sBTC when depositing zBTC", async () => {
+//     console.log("AYO MINT");
+//     const deposit = new anchor.BN(100_000_000); // 1 zBTC (8 decimals)
+//     const fee = deposit.toNumber() * FEE_RATE_BPS / 10_000; // 5% = 0.05 zBTC
+//     const netDeposit = deposit.toNumber() - fee;
 
-//     // Initialize the program
-//     await program.methods
+//     const tx = await program.methods
 //       .initialize(
 //         new anchor.BN(FEE_RATE_BPS),
 //         new anchor.BN(MIN_COLLATERAL_BPS)
@@ -248,567 +277,372 @@ const expect = chai.expect;
 //         squadMultisig: admin.publicKey,
 //         sbtcMint: sbtcMint,
 //         zbtcMint: zbtcMint,
-//       })
+//         sbtcMintAuthorityPda: sbtcMintAuthorityPda,
+//         treasuryAuthorityPda: treasuryAuthorityPda,
+//         feeAuthorityPda: feeAuthorityPda,
+//         treasuryZbtcVault: treasuryZbtcVault,
+//         feeVault: feeVault,
+//         config: configPda,
+//         tokenProgram: TOKEN_PROGRAM_ID,
+//         systemProgram: SystemProgram.programId,
+//       } as any)
 //       .rpc();
 
-//     // Create user token accounts
-//     userSbtcAta = getAssociatedTokenAddressSync(sbtcMint, user.publicKey);
-//     userZbtcAta = getAssociatedTokenAddressSync(zbtcMint, user.publicKey);
+//     console.log("Initialize tx:", tx);
 
-//     // Create user ATAs if they don't exist
-//     await createAccount(connection, admin.payer, zbtcMint, user.publicKey);
-//     await createAccount(connection, admin.payer, sbtcMint, user.publicKey);
+//     // Pre balances
+//     const preUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+//     const preUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+//     const preTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+//     const preFee = (await getAccount(connection, feeVault)).amount;
 
-//     // Mint some zBTC to user for testing
-//     await mintTo(
-//       connection,
-//       admin.payer,
-//       zbtcMint,
-//       userZbtcAta,
-//       admin.publicKey,
-//       1000000000000 // 1000 zBTC (9 decimals)
-//     );
-//   });
+//     // === Call mint_sbtc ===
+//     await program.methods
+//     .mintSbtc(deposit)
+//     .accounts({
+//       user: user.publicKey,
+//       squadMultisig: admin.publicKey,
+//       priceAccount: priceAccount,
+//       userSbtcAccount: userSbtcAccount,
+//       userZbtcAccount: userZbtcAccount,
+//       config: configPda,
+//       sbtcMint: sbtcMint,
+//       zbtcMint: zbtcMint,
+//       treasuryZbtcVault: treasuryZbtcVault,
+//       feeVault: feeVault,
+//       sbtcMintAuthorityPda: sbtcMintAuthorityPda,
+//       tokenProgram: TOKEN_PROGRAM_ID,
+//     } as any)
+//     .signers([user])
+//     .rpc();
 
+//     // Post balances
+//     const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+//     const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+//     const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+//     const postFee = (await getAccount(connection, feeVault)).amount;
 
-//   it("Should successfully mint sBTC when user deposits zBTC", async () => {
-//     const depositAmount = new anchor.BN(100000000000); // 100 zBTC
-    
-//     // Get initial balances
-//     const initialUserZbtc = await getAccount(connection, userZbtcAta);
-//     const initialUserSbtc = await getAccount(connection, userSbtcAta);
-//     const initialTreasury = await getAccount(connection, treasuryZbtcVaultPda);
-//     const initialFees = await getAccount(connection, feeVaultPda);
+//     // === Assertions ===
+//     expect(postUserZbtc.toString()).to.equal((Number(preUserZbtc) - deposit.toNumber()).toString());
+//     expect(postTreasury.toString()).to.equal((Number(preTreasury) + netDeposit).toString());
+//     expect(postFee.toString()).to.equal((Number(preFee) + fee).toString());
+//     expect(postUserSbtc > preUserSbtc).to.be.true;
 
-//     const tx = await program.methods
-//       .mintSbtc(depositAmount)
-//       .accounts({
-//         user: user.publicKey,
-//         squadMultisig: admin.publicKey,
-//         zbtcMint: zbtcMint,
-//         sbtcMint: sbtcMint,
-//         userZbtcAccount: userZbtcAta,
-//         userSbtcAccount: userSbtcAta,
-//       })
-//       .signers([user])
-//       .rpc();
-
-//     // Verify final balances
-//     const finalUserZbtc = await getAccount(connection, userZbtcAta);
-//     const finalUserSbtc = await getAccount(connection, userSbtcAta);
-//     const finalTreasury = await getAccount(connection, treasuryZbtcVaultPda);
-//     const finalFees = await getAccount(connection, feeVaultPda);
-
-//     // Calculate expected amounts (1:1 price with 0.5% fee)
-//     const expectedFee = depositAmount.mul(new anchor.BN(FEE_RATE_BPS)).div(new anchor.BN(10000));
-//     const expectedNetZbtc = depositAmount.sub(expectedFee);
-//     const expectedSbtcMinted = expectedNetZbtc; // 1:1 price
-
-//     // Verify zBTC deductions
-//     let initialUserZbtcAmount = new anchor.BN(initialUserZbtc.amount);
-//     console.log(`initial amount: ${initialUserZbtcAmount.toNumber()} | final amount: ${finalUserZbtc.amount}`)
-//     expect(Number(finalUserZbtc.amount)).to.equal(
-//       initialUserZbtcAmount.toNumber() - depositAmount.toNumber()
-//     );
-
-//     // Verify treasury received net zBTC
-//     let initialTreasuryAmount = new anchor.BN(initialTreasury.amount);
-//     expect(Number(finalTreasury.amount)).to.equal(
-//       initialTreasuryAmount.toNumber() + expectedNetZbtc.toNumber()
-//     );
-
-//     // Verify fees collected
-//     let initialFeesAmount = new anchor.BN(initialFees.amount);
-//     expect(Number(finalFees.amount)).to.equal(
-//       initialFeesAmount.toNumber() + expectedFee.toNumber()
-//     );
-
-//     // Verify user received sBTC
-//     let initialUserSbtcAmount = new anchor.BN(initialUserSbtc.amount);      
-//     expect(Number(finalUserSbtc.amount)).to.equal(
-//       initialUserSbtcAmount.toNumber() + expectedSbtcMinted.toNumber()
-//     );
-//   });
-
-
-//   it("Should fail when user has insufficient zBTC balance", async () => {
-//     const userZbtcBalance = await getAccount(connection, userZbtcAta);
-//     const excessiveAmount = new anchor.BN(userZbtcBalance.amount).addn(1000);
-
-//     await expect(
-//       program.methods
-//         .mintSbtc(excessiveAmount)
-//         .accounts({
-//           user: user.publicKey,
-//           zbtcMint: zbtcMint,
-//           sbtcMint: sbtcMint,
-//           userZbtcAccount: userZbtcAta,
-//           userSbtcAccount: userSbtcAta,
-//         })
-//         .signers([user])
-//         .rpc()
-//     ).to.be.rejected;
-//   });
-
-
-//   it("Should fail when user doesn't own the zBTC account", async () => {
-//     const maliciousUser = Keypair.generate();
-//     const depositAmount = new anchor.BN(1000000);
-
-//     await expect(
-//       program.methods
-//         .mintSbtc(depositAmount)
-//         .accounts({
-//           user: user.publicKey, // Correct user
-//           zbtcMint: zbtcMint,
-//           sbtcMint: sbtcMint,
-//           userZbtcAccount: userZbtcAta, // But signed by wrong user
-//           userSbtcAccount: userSbtcAta,
-//         })
-//         .signers([maliciousUser]) // Wrong signer
-//         .rpc()
-//     ).to.be.rejected;
-//   });
-
-
-//   it("Should fail when using wrong mint accounts", async () => {
-//     const depositAmount = new anchor.BN(1000000);
-
-//     // Create a fake mint
-//     const fakeMint = await createMint(
-//       connection,
-//       admin.payer,
-//       admin.publicKey,
-//       null,
-//       9
-//     );
-
-//     await expect(
-//       program.methods
-//         .mintSbtc(depositAmount)
-//         .accounts({
-//           user: user.publicKey,
-//           zbtcMint: fakeMint, // Wrong zBTC mint
-//           sbtcMint: sbtcMint,
-//           userZbtcAccount: userZbtcAta,
-//           userSbtcAccount: userSbtcAta,
-//         })
-//         .signers([user])
-//         .rpc()
-//     ).to.be.rejected;
-//   });
-
-
-//   it("Should handle minimum amounts correctly", async () => {
-//     const tinyAmount = new anchor.BN(1); // 1 lamport
-
-//     await expect(
-//       program.methods
-//         .mintSbtc(tinyAmount)
-//         .accounts({
-//           user: user.publicKey,
-//           zbtcMint: zbtcMint,
-//           sbtcMint: sbtcMint,
-//           userZbtcAccount: userZbtcAta,
-//           userSbtcAccount: userSbtcAta,
-//         })
-//         .signers([user])
-//         .rpc()
-//     ).to.be.rejected; // Should fail for very small amounts
-//   });
-
-
-//   it("Should emit MintEvent on successful mint", async () => {
-//     const depositAmount = new anchor.BN(50000000); // 50 zBTC
-
-//     const tx = await program.methods
-//       .mintSbtc(depositAmount)
-//       .accounts({
-//         user: user.publicKey,
-//         squadMultisig: admin.publicKey,
-//         zbtcMint: zbtcMint,
-//         sbtcMint: sbtcMint,
-//         userZbtcAccount: userZbtcAta,
-//         userSbtcAccount: userSbtcAta,
-//       })
-//       .signers([user])
-//       .rpc();
-
-//     // TODO: Check transaction logs for MintEvent
-//     // This would require parsing transaction logs for the event
+//     // Config check
+//     const config = await program.account.config.fetch(configPda);
+//     expect(config.totalSbtcOutstanding.toString()).to.equal(postUserSbtc.toString());
 //   });
 // });
 
-
-describe("otc-swap: burn sBTC", async () => {
+describe("burn_sbtc", () => {
   const provider = anchor.AnchorProvider.local();
   anchor.setProvider(provider);
 
   const program = anchor.workspace.OtcSwap as Program<OtcSwap>;
-  const admin = provider.wallet;
   const connection = provider.connection;
+  const admin = provider.wallet;
 
-  // Constants
-  const FEE_RATE_BPS = 50; // 0.5%
-  const MIN_COLLATERAL_BPS = 25000; // 250%
+  let sbtcMint: anchor.web3.PublicKey;
+  let zbtcMint: anchor.web3.PublicKey;
+  let user: anchor.web3.Keypair;
+  let priceAccount: anchor.web3.PublicKey;
 
-  let sbtcMint: PublicKey;
-  let zbtcMint: PublicKey;
-  let sbtcMintAuthorityPda: PublicKey;
-  let treasuryZbtcVaultPda: PublicKey;
-  let feeVaultPda: PublicKey;
-  let configPda: PublicKey;
+  let userZbtcAccount: anchor.web3.PublicKey;
+  let userSbtcAccount: anchor.web3.PublicKey;
+  let treasuryZbtcVault: anchor.web3.PublicKey;
+  let feeVault: anchor.web3.PublicKey;
+  let sbtcMintAuthorityPda: anchor.web3.PublicKey;
+  let treasuryAuthorityPda: anchor.web3.PublicKey;
+  let feeAuthorityPda: anchor.web3.PublicKey;
+  let configPda: anchor.web3.PublicKey;
 
-  // Test users
-  let user: Keypair;
-  let userSbtcAta: PublicKey;
-  let userZbtcAta: PublicKey;
+  const FEE_RATE_BPS = 500; // 5%
+  const MIN_COLLATERAL_BPS = 20000; // 200%
 
-  const deriveVaultPdAs = (squadWallet: PublicKey) => {
-    const [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("sbtc_mint_authority")],
+  // Helper PDA derivations
+  const derivePdas = (squadWallet: PublicKey) => {
+    [sbtcMintAuthorityPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("sbtc_mint_authority"), squadWallet.toBuffer()],
       program.programId
     );
 
-    const [treasuryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury"), squadWallet.toBuffer()],
+    [treasuryAuthorityPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury_auth_v1"), squadWallet.toBuffer()],
       program.programId
     );
 
-    const [feePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("fees"), squadWallet.toBuffer()],
+    [feeAuthorityPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("fee_auth_v1"), squadWallet.toBuffer()],
       program.programId
     );
 
-    const [configPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("config"), squadWallet.toBuffer()],
+    [configPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("config_v1"), squadWallet.toBuffer()],
       program.programId
     );
 
-    return {
-      sbtcMintAuthorityPda,
-      treasuryZbtcVaultPda: treasuryPda,
-      feeVaultPda: feePda,
-      configPda,
-    };
+    return { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda };
   };
 
   before(async () => {
-    // Create test user
-    user = Keypair.generate();
-  
-    // Airdrop SOL to user
-    const airdropSig = await connection.requestAirdrop(
-      user.publicKey,
-      1000000000 // 1 SOL
-    );
-    await connection.confirmTransaction(airdropSig);
+    // === Create mints ===
+    zbtcMint = await createMint(connection, admin.payer, admin.publicKey, null, 8);
+    sbtcMint = await createMint(connection, admin.payer, admin.publicKey, admin.publicKey, 8);
 
-    // === Create test mints ===
-    sbtcMint = await createMint(
+    const { sbtcMintAuthorityPda, treasuryAuthorityPda, feeAuthorityPda, configPda } = derivePdas(admin.publicKey);
+
+    // === Create token accounts BEFORE initialize ===
+    const treasuryAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       admin.payer,
-      admin.publicKey, // Initial mint authority = Squad
-      admin.publicKey, // Freeze authority = Squad
-      9,
+      zbtcMint,
+      treasuryAuthorityPda,
+      true,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
+    treasuryZbtcVault = treasuryAccount.address;
 
-    zbtcMint = await createMint(
+    const feeAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       admin.payer,
-      admin.publicKey,
-      null,
-      9
+      zbtcMint,
+      feeAuthorityPda,
+      true,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
+    feeVault = feeAccount.address;
 
-    // === Derive PDA vault addresses ===
-    const pdas = deriveVaultPdAs(admin.publicKey);
-    sbtcMintAuthorityPda = pdas.sbtcMintAuthorityPda;
-    treasuryZbtcVaultPda = pdas.treasuryZbtcVaultPda;
-    feeVaultPda = pdas.feeVaultPda;
-    configPda = pdas.configPda;
+    // === Create user + accounts ===
+    user = anchor.web3.Keypair.generate();
+    await provider.connection.requestAirdrop(user.publicKey, 2e9);
 
-    // Initialize the program
-    await program.methods
-      .initialize(
-        new anchor.BN(FEE_RATE_BPS),
-        new anchor.BN(MIN_COLLATERAL_BPS)
-      )
-      .accounts({
-        squadMultisig: admin.publicKey,
-        sbtcMint: sbtcMint,
-        zbtcMint: zbtcMint,
-      })
-      .rpc();
+    priceAccount = anchor.web3.Keypair.generate().publicKey;
 
-    // Create user token accounts
-    userSbtcAta = getAssociatedTokenAddressSync(sbtcMint, user.publicKey);
-    userZbtcAta = getAssociatedTokenAddressSync(zbtcMint, user.publicKey);
+    userZbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, zbtcMint, user.publicKey);
+    userSbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, sbtcMint, user.publicKey);
 
-    // Create user ATAs if they don't exist
-    await createAccount(connection, admin.payer, zbtcMint, user.publicKey);
-    await createAccount(connection, admin.payer, sbtcMint, user.publicKey);
-
-    // Mint some zBTC to user for testing
+    // Fund user with zBTC
     await mintTo(
       connection,
       admin.payer,
       zbtcMint,
-      userZbtcAta,
+      userZbtcAccount,
       admin.publicKey,
-      1000000000000 // 1000 zBTC (9 decimals)
+      1_000_000_000 // 10 zBTC
     );
 
-    const depositAmount = new anchor.BN(500000000000)
-    const tx = await program.methods
-      .mintSbtc(depositAmount)
-      .accounts({
-        user: user.publicKey,
-        squadMultisig: admin.publicKey,
-        zbtcMint: zbtcMint,
-        sbtcMint: sbtcMint,
-        userZbtcAccount: userZbtcAta,
-        userSbtcAccount: userSbtcAta,
-      })
-      .signers([user])
-      .rpc();
-    // // Also mint some sBTC to user for burn testing
-    // await mintTo(
-    //   connection,
-    //   admin.payer,
-    //   sbtcMint,
-    //   userSbtcAta,
-    //   program.programId,
-    //   500000000 // 500 sBTC (9 decimals)
-    // );
-  });
-
-  it("Should successfully burn sBTC and return zBTC to user", async () => {
-    console.log("Should successfully burn sBTC and return zBTC to user");
-    const burnAmount = new anchor.BN(100000000); // 100 sBTC
-    
-    // Get initial balances
-    const initialUserZbtc = await getAccount(connection, userZbtcAta);
-    const initialUserSbtc = await getAccount(connection, userSbtcAta);
-    const initialTreasury = await getAccount(connection, treasuryZbtcVaultPda);
-    const initialFees = await getAccount(connection, feeVaultPda);
-
-    const tx = await program.methods
-      .burnSbtc(burnAmount)
-      .accounts({
-        user: user.publicKey,
-        squadMultisig: admin.publicKey,
-        zbtcMint: zbtcMint,
-        sbtcMint: sbtcMint,
-        userZbtcAccount: userZbtcAta,
-        userSbtcAccount: userSbtcAta,
-      })
-      .signers([user])
-      .rpc();
-
-    // Verify final balances
-    const finalUserZbtc = await getAccount(connection, userZbtcAta);
-    const finalUserSbtc = await getAccount(connection, userSbtcAta);
-    const finalTreasury = await getAccount(connection, treasuryZbtcVaultPda);
-    const finalFees = await getAccount(connection, feeVaultPda);
-
-    // Calculate expected amounts (1:1 price with 0.5% fee)
-    const expectedZbtcValue = burnAmount; // 1:1 price
-    const expectedFee = expectedZbtcValue.mul(new anchor.BN(FEE_RATE_BPS)).div(new anchor.BN(10000));
-    const expectedNetZbtc = expectedZbtcValue.sub(expectedFee);
-
-    // Verify sBTC was burned
-    expect(Number(finalUserSbtc.amount)).to.equal(
-      Number(initialUserSbtc.amount) - burnAmount.toNumber()
-    );
-
-    // Verify user received net zBTC
-    expect(Number(finalUserZbtc.amount)).to.equal(
-      Number(initialUserZbtc.amount) + expectedNetZbtc.toNumber()
-    );
-
-    // Verify treasury paid out zBTC
-    expect(Number(finalTreasury.amount)).to.equal(
-      Number(initialTreasury.amount) - expectedZbtcValue.toNumber()
-    );
-
-    // Verify fees were retained in treasury (fees stay in treasury for burn operations)
-    expect(Number(finalFees.amount)).to.equal(
-      Number(initialFees.amount) + expectedFee.toNumber()
-    );
-  });
-
-
-  it("Should fail when user has insufficient sBTC balance", async () => {
-    const userSbtcBalance = await getAccount(connection, userSbtcAta);
-    const excessiveAmount = new anchor.BN(Number(userSbtcBalance.amount) + 1000);
-
-    await expect(
-      program.methods
-        .burnSbtc(excessiveAmount)
-        .accounts({
-          user: user.publicKey,
-          squadMultisig: admin.publicKey,
-          zbtcMint: zbtcMint,
-          sbtcMint: sbtcMint,
-          userZbtcAccount: userZbtcAta,
-          userSbtcAccount: userSbtcAta,
-        })
-        .signers([user])
-        .rpc()
-    ).to.be.rejected;
-  });
-
-  it("Should fail when treasury has insufficient zBTC balance", async () => {
-    // First, check current treasury balance
-    const treasuryBalance = await getAccount(connection, treasuryZbtcVaultPda);
-    
-    // Try to burn more sBTC than treasury can cover
-    const excessiveBurnAmount = new anchor.BN(Number(treasuryBalance.amount) + 1000);
-
-    await expect(
-      program.methods
-        .burnSbtc(excessiveBurnAmount)
-        .accounts({
-          user: user.publicKey,
-          squadMultisig: admin.publicKey,
-          zbtcMint: zbtcMint,
-          sbtcMint: sbtcMint,
-          userZbtcAccount: userZbtcAta,
-          userSbtcAccount: userSbtcAta,
-        })
-        .signers([user])
-        .rpc()
-    ).to.be.rejected;
-  });
-
-  it("Should fail when user doesn't own the sBTC account", async () => {
-    const maliciousUser = Keypair.generate();
-    const burnAmount = new anchor.BN(1000000);
-
-    await expect(
-      program.methods
-        .burnSbtc(burnAmount)
-        .accounts({
-          user: user.publicKey, // Correct user
-          squadMultisig: admin.publicKey,
-          zbtcMint: zbtcMint,
-          sbtcMint: sbtcMint,
-          userZbtcAccount: userZbtcAta,
-          userSbtcAccount: userSbtcAta, // But signed by wrong user
-        })
-        .signers([maliciousUser]) // Wrong signer
-        .rpc()
-    ).to.be.rejected;
-  });
-
-  it("Should fail when using wrong mint accounts", async () => {
-    const burnAmount = new anchor.BN(1000000);
-
-    // Create a fake mint
-    const fakeMint = await createMint(
+    // Fund treasury with zBTC for redemptions
+    await mintTo(
       connection,
       admin.payer,
+      zbtcMint,
+      treasuryZbtcVault,
       admin.publicKey,
-      null,
-      9
+      2_000_000_000 // 20 zBTC
     );
 
-    await expect(
-      program.methods
-        .burnSbtc(burnAmount)
-        .accounts({
-          user: user.publicKey,
-          squadMultisig: admin.publicKey,
-          zbtcMint: zbtcMint,
-          sbtcMint: fakeMint, // Wrong sBTC mint
-          userZbtcAccount: userZbtcAta,
-          userSbtcAccount: userSbtcAta,
-        })
-        .signers([user])
-        .rpc()
-    ).to.be.rejected;
+    // === Initialize program ===
+    await program.methods
+      .initialize(new anchor.BN(FEE_RATE_BPS), new anchor.BN(MIN_COLLATERAL_BPS))
+      .accounts({
+        squadMultisig: admin.publicKey,
+        sbtcMint: sbtcMint,
+        zbtcMint: zbtcMint,
+        sbtcMintAuthorityPda: sbtcMintAuthorityPda,
+        treasuryAuthorityPda: treasuryAuthorityPda,
+        feeAuthorityPda: feeAuthorityPda,
+        treasuryZbtcVault: treasuryZbtcVault,
+        feeVault: feeVault,
+        config: configPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .rpc();
+
+    // === First mint some sBTC to user so they have something to burn ===
+    const mintAmount = new anchor.BN(100_000_000); // 1 sBTC
+    await program.methods
+      .mintSbtc(mintAmount)
+      .accounts({
+        user: user.publicKey,
+        squadMultisig: admin.publicKey,
+        priceAccount: priceAccount,
+        userSbtcAccount: userSbtcAccount,
+        userZbtcAccount: userZbtcAccount,
+        config: configPda,
+        sbtcMint: sbtcMint,
+        zbtcMint: zbtcMint,
+        treasuryZbtcVault: treasuryZbtcVault,
+        feeVault: feeVault,
+        sbtcMintAuthorityPda: sbtcMintAuthorityPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([user])
+      .rpc();
+
+    console.log("Setup complete - user has sBTC to burn");
   });
 
-  it("Should handle minimum amounts correctly", async () => {
-    const tinyAmount = new anchor.BN(1); // 1 lamport
+  it("burns sBTC and redeems zBTC", async () => {
+    const burnAmount = new anchor.BN(50_000_000); // 0.5 sBTC
+    const fee = burnAmount.toNumber() * FEE_RATE_BPS / 10_000; // 5% fee
+    const netZbtc = burnAmount.toNumber() - fee; // 1:1 price assumption
 
-    await expect(
-      program.methods
-        .burnSbtc(tinyAmount)
-        .accounts({
-          user: user.publicKey,
-          squadMultisig: admin.publicKey,
-          zbtcMint: zbtcMint,
-          sbtcMint: sbtcMint,
-          userZbtcAccount: userZbtcAta,
-          userSbtcAccount: userSbtcAta,
-        })
-        .signers([user])
-        .rpc()
-    ).to.be.rejected; // Should fail for very small amounts
-  });
+    // Pre balances
+    const preUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+    const preUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+    const preTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+    const preFee = (await getAccount(connection, feeVault)).amount;
+    const preConfig = await program.account.config.fetch(configPda);
 
-  it("Should emit BurnEvent on successful burn", async () => {
-    const burnAmount = new anchor.BN(50000000); // 50 sBTC
+    console.log("Pre-burn balances:");
+    console.log("User zBTC:", preUserZbtc.toString());
+    console.log("User sBTC:", preUserSbtc.toString());
+    console.log("Treasury:", preTreasury.toString());
+    console.log("Fee vault:", preFee.toString());
+    console.log("Total sBTC outstanding:", preConfig.totalSbtcOutstanding.toString());
 
-    const tx = await program.methods
+    // === Call burn_sbtc ===
+    await program.methods
       .burnSbtc(burnAmount)
       .accounts({
         user: user.publicKey,
         squadMultisig: admin.publicKey,
-        zbtcMint: zbtcMint,
+        config: configPda,
         sbtcMint: sbtcMint,
-        userZbtcAccount: userZbtcAta,
-        userSbtcAccount: userSbtcAta,
-      })
+        zbtcMint: zbtcMint,
+        userSbtcAccount: userSbtcAccount,
+        userZbtcAccount: userZbtcAccount,
+        treasuryZbtcVault: treasuryZbtcVault,
+        feeVault: feeVault,
+        treasuryAuthorityPda: treasuryAuthorityPda,
+        feeAuthorityPda: feeAuthorityPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
       .signers([user])
       .rpc();
 
-    // TODO: Check transaction logs for BurnEvent
-    // This would require parsing transaction logs for the event
-  });
+    // Post balances
+    const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+    const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+    const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+    const postFee = (await getAccount(connection, feeVault)).amount;
+    const postConfig = await program.account.config.fetch(configPda);
 
-  it("Should maintain proper collateralization after burn", async () => {
-    // Get current treasury zBTC balance and total sBTC supply
-    // const treasuryBalance = await getAccount(connection, treasuryZbtcVaultPda);
-    // const sbtcMintInfo = await getAccount(connection, sbtcMint);
-    let initialData = await connection.getParsedAccountInfo(sbtcMint, "confirmed");
-    let initialParsedMintInfo = (initialData?.value?.data as ParsedAccountData)?.parsed?.info;
+    console.log("Post-burn balances:");
+    console.log("User zBTC:", postUserZbtc.toString());
+    console.log("User sBTC:", postUserSbtc.toString());
+    console.log("Treasury:", postTreasury.toString());
+    console.log("Fee vault:", postFee.toString());
+    console.log("Total sBTC outstanding:", postConfig.totalSbtcOutstanding.toString());
+
+    // === Assertions ===
+    // User sBTC should be burned
+    expect(Number(postUserSbtc)).to.equal(Number(preUserSbtc) - burnAmount.toNumber());
     
-    const burnAmount = new anchor.BN(50000000); // 50 sBTC
-
-    const tx = await program.methods
-      .burnSbtc(burnAmount)
-      .accounts({
-        user: user.publicKey,
-        squadMultisig: admin.publicKey,
-        zbtcMint: zbtcMint,
-        sbtcMint: sbtcMint,
-        userZbtcAccount: userZbtcAta,
-        userSbtcAccount: userSbtcAta,
-      })
-      .signers([user])
-      .rpc();
-
-    // After burn, the collateralization should be maintained or improved
-    // const finalTreasuryBalance = await getAccount(connection, treasuryZbtcVaultPda);
-    // const finalSbtcMintInfo = await getAccount(connection, sbtcMint);
-
-    // Treasury should have less zBTC (paid out to user)
-    // sBTC supply should be reduced by burn amount
-    // Collateral ratio should remain healthy
-    // let data = await connection.getParsedAccountInfo(sbtcMint, "confirmed");
-    // let parsedMintInfo = (data?.value?.data as ParsedAccountData)?.parsed?.info;
-    // if (parsedMintInfo) {
-    //   expect(Number(parsedMintInfo.supply)).to.equal(Number(initialParsedMintInfo.supply) - burnAmount.toNumber() - 60000000);
-    // }
-    // expect(Number(finalSbtcMintInfo.supply)).to.equal(
-    //   Number(sbtcMintInfo.supply) - burnAmount.toNumber()
-    // );
+    // User should receive net zBTC (after fee)
+    expect(Number(postUserZbtc)).to.equal(Number(preUserZbtc) + netZbtc);
+    
+    // Treasury should decrease by total zBTC value (net + fee)
+    expect(Number(postTreasury)).to.equal(Number(preTreasury) - burnAmount.toNumber());
+    
+    // Fee vault should increase by fee amount
+    expect(Number(postFee)).to.equal(Number(preFee) + fee);
+    
+    // Total sBTC outstanding should decrease
+    expect(postConfig.totalSbtcOutstanding.toString()).to.equal(
+      (Number(preConfig.totalSbtcOutstanding) - burnAmount.toNumber()).toString()
+    );
   });
 
+  it("fails when burning zero amount", async () => {
+    try {
+      await program.methods
+        .burnSbtc(new anchor.BN(0))
+        .accounts({
+          user: user.publicKey,
+          squadMultisig: admin.publicKey,
+          config: configPda,
+          sbtcMint: sbtcMint,
+          zbtcMint: zbtcMint,
+          userSbtcAccount: userSbtcAccount,
+          userZbtcAccount: userZbtcAccount,
+          treasuryZbtcVault: treasuryZbtcVault,
+          feeVault: feeVault,
+          treasuryAuthorityPda: treasuryAuthorityPda,
+          feeAuthorityPda: feeAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([user])
+        .rpc();
+      
+      expect.fail("Should have failed with InvalidAmount error");
+    } catch (error) {
+      expect(error.message).to.include("InvalidAmount");
+    }
+  });
 
+  it("fails when user has insufficient sBTC balance", async () => {
+    const userBalance = (await getAccount(connection, userSbtcAccount)).amount;
+    const excessiveBurn = new anchor.BN(Number(userBalance) + 1_000_000); // More than user has
+
+    try {
+      await program.methods
+        .burnSbtc(excessiveBurn)
+        .accounts({
+          user: user.publicKey,
+          squadMultisig: admin.publicKey,
+          config: configPda,
+          sbtcMint: sbtcMint,
+          zbtcMint: zbtcMint,
+          userSbtcAccount: userSbtcAccount,
+          userZbtcAccount: userZbtcAccount,
+          treasuryZbtcVault: treasuryZbtcVault,
+          feeVault: feeVault,
+          treasuryAuthorityPda: treasuryAuthorityPda,
+          feeAuthorityPda: feeAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([user])
+        .rpc();
+      
+      expect.fail("Should have failed with InsufficientBalance error");
+    } catch (error) {
+      expect(error.message).to.include("InsufficientBalance");
+    }
+  });
+
+  it("fails when treasury has insufficient zBTC", async () => {
+    // Try to burn a very large amount that would exceed treasury reserves
+    const largeBurnAmount = new anchor.BN(1_000_000_000); // 10 sBTC
+
+    try {
+      await program.methods
+        .burnSbtc(largeBurnAmount)
+        .accounts({
+          user: user.publicKey,
+          squadMultisig: admin.publicKey,
+          config: configPda,
+          sbtcMint: sbtcMint,
+          zbtcMint: zbtcMint,
+          userSbtcAccount: userSbtcAccount,
+          userZbtcAccount: userZbtcAccount,
+          treasuryZbtcVault: treasuryZbtcVault,
+          feeVault: feeVault,
+          treasuryAuthorityPda: treasuryAuthorityPda,
+          feeAuthorityPda: feeAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([user])
+        .rpc();
+      
+      expect.fail("Should have failed with InsufficientBalance error");
+    } catch (error) {
+      expect(error.message).to.include("InsufficientBalance");
+    }
+  });
 });
-
-
