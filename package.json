@@ -2,7 +2,11 @@
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "test:integration": "anchor test --skip-local-validator --skip-deploy",
+    "test:local": "anchor test",
+    "build": "anchor build",
+    "deploy:local": "anchor deploy --provider.cluster localnet"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",

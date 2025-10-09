@@ -8,3 +8,7 @@ test-ledger
 yarn.lock
 .env
 .env.local
+
+programs/sbtc-oracle
+programs/mock-pyth
+notes.txt
