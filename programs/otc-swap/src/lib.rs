@@ -164,11 +164,19 @@ pub mod otc_swap {
 
         // -- 4) Get sBTC price from your oracle
         let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
+        msg!("DEBUG: Oracle account data length: {}", oracle_account_data.len());
+
+        // Print first 32 bytes to see the actual data
+        let debug_bytes = &oracle_account_data[0..32.min(oracle_account_data.len())];
+        msg!("DEBUG: First 32 bytes of oracle account: {:?}", debug_bytes);
+
         let oracle_data = &oracle_account_data[8..]; // Skip discriminator
-        
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
-        
+
+        msg!("DEBUG: Read sbtc_price_cents: {}", sbtc_price_cents);
+        msg!("DEBUG: Read last_update: {}", last_update);
+
         // Check if oracle data is recent enough (e.g., within 5 minutes)
         let current_timestamp = clock.unix_timestamp;
         require!(current_timestamp - last_update <= 300, ErrorCode::StaleOraclePrice);
@@ -179,6 +187,12 @@ pub mod otc_swap {
         
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
+
+        msg!("DEBUG: zbtc_price_cents: {}", zbtc_price_cents);
+        msg!("DEBUG: sbtc_price_cents: {}", sbtc_price_cents);
+        msg!("DEBUG: net_zbtc_u128: {}", net_zbtc_u128);
+        msg!("DEBUG: zbtc_decimals: {}", zbtc_decimals);
+        msg!("DEBUG: sbtc_decimals: {}", sbtc_decimals);
         
         // Convert net zBTC amount to USD value (in cents)
         let net_zbtc_value_cents = net_zbtc_u128
@@ -187,16 +201,23 @@ pub mod otc_swap {
             .checked_div(10u128.pow(zbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // Calculate sBTC to mint: (net_zbtc_value_cents * 10^sbtc_decimals) / sbtc_price_cents
-        let sbtc_to_mint_u128 = net_zbtc_value_cents
+        let sbtc_to_mint_u128 = net_zbtc_u128
+            .checked_mul(zbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
             .checked_mul(10u128.pow(sbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?
             .checked_div(sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10u128.pow(zbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
         require!(sbtc_to_mint_u128 > 0, ErrorCode::InvalidAmount);
         require!(sbtc_to_mint_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
         let sbtc_to_mint_u64 = sbtc_to_mint_u128 as u64;
+
+        msg!("DEBUG: net_zbtc_value_cents: {}", net_zbtc_value_cents);
+        msg!("DEBUG: sbtc_to_mint_u128: {}", sbtc_to_mint_u128);
+        msg!("DEBUG: sbtc_to_mint_u64: {}", sbtc_to_mint_u64);
 
         // -- 6) Transfer zBTC to treasury and fee vault
         token::transfer(
@@ -347,6 +368,14 @@ pub mod otc_swap {
         require!(sbtc_to_mint_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
         let sbtc_to_mint_u64 = sbtc_to_mint_u128 as u64;
 
+        // In your mint_sbtc function, after price conversions:
+        msg!("Debug - zbtc_amount: {}", zbtc_amount);
+        msg!("Debug - net_zbtc_u128: {}", net_zbtc_u128);
+        msg!("Debug - zbtc_price_cents: {}", zbtc_price_cents);
+        msg!("Debug - sbtc_price_cents: {}", sbtc_price_cents);
+        msg!("Debug - net_zbtc_value_cents: {}", net_zbtc_value_cents);
+        msg!("Debug - sbtc_to_mint_u128: {}", sbtc_to_mint_u128);
+
         // -- 6) Transfer zBTC to treasury and fee vault
         token::transfer(
             CpiContext::new(
@@ -438,9 +467,7 @@ pub mod otc_swap {
     }
 
     pub fn burn_sbtc(ctx: Context<BurnSbtc>, sbtc_amount: u64) -> Result<()> {
-        require!(sbtc_amount > 0, ErrorCode::InvalidAmount); // maybe put a lower limit on sBTC when mint/burn to avoid dust
-        // like this:
-        // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount);
+        require!(sbtc_amount > 0, ErrorCode::InvalidAmount);
 
         let config = &mut ctx.accounts.config;
         require!(!config.paused, ErrorCode::Paused);
@@ -460,7 +487,7 @@ pub mod otc_swap {
 
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
-        let max_age = 60u64;
+        let max_age = 300u64; // Consistent with mint: 5 minutes
 
         let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
@@ -468,18 +495,14 @@ pub mod otc_swap {
         // Confidence check
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
-        // Convert Pyth price to cents (USD) - SAFE MATH VERSION
+        // Convert Pyth price to cents (USD) - Consistent with mint
         let zbtc_price_cents: u64 = if price.price >= 0 {
-            // Pyth price format: actual_price = price * 10^expo
-            // We want price in cents: price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
-            let actual_expo = price.expo + 2; // +2 to convert to cents
+            let actual_expo = price.expo + 2;
             
             if actual_expo >= 0 {
-                // Positive exponent: multiply
                 (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             } else {
-                // Negative exponent: divide
                 (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             }
@@ -489,7 +512,7 @@ pub mod otc_swap {
 
         // -- 2) Get sBTC price from your oracle
         let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
-        let oracle_data = &oracle_account_data[8..]; // Skip discriminator
+        let oracle_data = &oracle_account_data[8..];
         
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
@@ -497,30 +520,24 @@ pub mod otc_swap {
         // Check if oracle data is recent enough
         require!(current_time - last_update <= 300, ErrorCode::StaleOraclePrice);
 
-        // -- 3) Calculate zBTC to redeem
-        // sbtc_value_usd = sbtc_amount * (sbtc_price_cents / 10^sbtc_decimals)
-        // zbtc_to_redeem = sbtc_value_usd / (zbtc_price_cents / 10^zbtc_decimals)
-        
+        // -- 3) Calculate zBTC to redeem - Use consistent formula with mint
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
         
-        // Convert sBTC amount to USD value (in cents)
-        let sbtc_value_cents = (sbtc_amount as u128)
+        // Consistent calculation: zbtc_to_redeem = (sbtc_amount * sbtc_price_cents * 10^zbtc_decimals) / (zbtc_price_cents * 10^sbtc_decimals)
+        let zbtc_to_redeem_u128 = (sbtc_amount as u128)
             .checked_mul(sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_mul(10u128.pow(zbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(zbtc_price_cents as u128)
             .ok_or(ErrorCode::InvalidAmount)?
             .checked_div(10u128.pow(sbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // Calculate zBTC to redeem: (sbtc_value_cents * 10^zbtc_decimals) / zbtc_price_cents
-        let zbtc_to_redeem_u128 = sbtc_value_cents
-            .checked_mul(10u128.pow(zbtc_decimals as u32))
-            .ok_or(ErrorCode::InvalidAmount)?
-            .checked_div(zbtc_price_cents as u128)
-            .ok_or(ErrorCode::InvalidAmount)?;
-
         require!(zbtc_to_redeem_u128 > 0, ErrorCode::InvalidAmount);
         require!(zbtc_to_redeem_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
-        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;        
+        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;
 
         // -- 4) Calculate fee and net redemption
         let fee_bps = config.fee_rate_bps as u128;
@@ -594,7 +611,29 @@ pub mod otc_swap {
             .checked_sub(sbtc_amount as u128)
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // -- 10) Emit event
+        // -- 10) Optional: Collateral check after burn (like in mint)
+        let treasury_balance = ctx.accounts.treasury_zbtc_vault.amount as u128;
+        
+        let required_zbtc_minor = config.total_sbtc_outstanding
+            .checked_mul(sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_mul(10u128.pow(zbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(zbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10u128.pow(sbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?;
+
+        let min_collateral_bps = config.min_collateral_bps as u128;
+        let required_zbtc_with_buffer = required_zbtc_minor
+            .checked_mul(min_collateral_bps)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10_000u128)
+            .ok_or(ErrorCode::InvalidAmount)?;
+
+        require!(treasury_balance >= required_zbtc_with_buffer, ErrorCode::InsufficientCollateral);
+
+        // -- 11) Emit event
         emit!(BurnEvent {
             user: ctx.accounts.user.key(),
             sbtc_burned: sbtc_amount,
@@ -607,7 +646,6 @@ pub mod otc_swap {
 
         Ok(())
     }
-    
     pub fn burn_sbtc_test(
         ctx: Context<BurnSbtcTest>,
         sbtc_amount: u64,
