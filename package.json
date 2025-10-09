@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
+    "@pythnetwork/client": "^2.22.1",
     "@solana/spl-token": "^0.4.14"
   },
   "devDependencies": {

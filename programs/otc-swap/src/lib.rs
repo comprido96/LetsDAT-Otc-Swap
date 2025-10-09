@@ -132,24 +132,35 @@ pub mod otc_swap {
 
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
-        let max_age = 60u64;
+        let max_age = 300u64;
 
         let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
 
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
+        msg!("price: {:?}", price);
 
         // Confidence check - ensure confidence is reasonable
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
-        // Convert Pyth price to cents (USD)
         let zbtc_price_cents: u64 = if price.price >= 0 {
-            // Convert from Pyth's base units to cents
-            // Pyth price: price * 10^expo, so to get cents: (price * 10^expo) / (10^(-2)) = price * 10^(expo + 2)
-            let price_in_cents = (price.price as u64) * 10u64.pow((price.expo + 2) as u32);
-            price_in_cents
+            // Pyth price format: actual_price = price * 10^expo
+            // We want price in cents: price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
+            
+            let actual_expo = price.expo + 2; // +2 to convert to cents
+            
+            if actual_expo >= 0 {
+                // Positive exponent: multiply
+                (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
+                    .ok_or(ErrorCode::InvalidPrice)?
+            } else {
+                // Negative exponent: divide
+                (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
+                    .ok_or(ErrorCode::InvalidPrice)?
+            }
         } else {
             return Err(anchor_lang::error::Error::from(ErrorCode::InvalidPrice));
         };
+        msg!("price in cents: {:?}", zbtc_price_cents);
 
         // -- 4) Get sBTC price from your oracle
         let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
@@ -426,27 +437,17 @@ pub mod otc_swap {
         Ok(())
     }
 
-
-
     pub fn burn_sbtc(ctx: Context<BurnSbtc>, sbtc_amount: u64) -> Result<()> {
         require!(sbtc_amount > 0, ErrorCode::InvalidAmount); // maybe put a lower limit on sBTC when mint/burn to avoid dust
         // like this:
         // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount);
 
         let config = &mut ctx.accounts.config;
-
-        // Paused check
         require!(!config.paused, ErrorCode::Paused);
-
-        // Mint sanity
         require!(ctx.accounts.zbtc_mint.key() == config.zbtc_mint, ErrorCode::InvalidZbtcMint);
         require!(ctx.accounts.sbtc_mint.key() == config.sbtc_mint, ErrorCode::InvalidSbtcMint);
-
-        // User owns token accounts
         require!(ctx.accounts.user_sbtc_account.owner == ctx.accounts.user.key(), ErrorCode::InvalidTokenAccountOwner);
         require!(ctx.accounts.user_zbtc_account.owner == ctx.accounts.user.key(), ErrorCode::InvalidTokenAccountOwner);
-
-        // Balance check
         require!(ctx.accounts.user_sbtc_account.amount >= sbtc_amount, ErrorCode::InsufficientBalance);
 
         // -- 1) Get zBTC/USD price from Pyth
@@ -467,9 +468,21 @@ pub mod otc_swap {
         // Confidence check
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
-        // Convert Pyth price to cents (USD)
+        // Convert Pyth price to cents (USD) - SAFE MATH VERSION
         let zbtc_price_cents: u64 = if price.price >= 0 {
-            (price.price as u64) * 10u64.pow((price.expo + 2) as u32)
+            // Pyth price format: actual_price = price * 10^expo
+            // We want price in cents: price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
+            let actual_expo = price.expo + 2; // +2 to convert to cents
+            
+            if actual_expo >= 0 {
+                // Positive exponent: multiply
+                (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
+                    .ok_or(ErrorCode::InvalidPrice)?
+            } else {
+                // Negative exponent: divide
+                (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
+                    .ok_or(ErrorCode::InvalidPrice)?
+            }
         } else {
             return Err(anchor_lang::error::Error::from(ErrorCode::InvalidPrice));
         };
@@ -594,7 +607,7 @@ pub mod otc_swap {
 
         Ok(())
     }
-
+    
     pub fn burn_sbtc_test(
         ctx: Context<BurnSbtcTest>,
         sbtc_amount: u64,
@@ -606,19 +619,11 @@ pub mod otc_swap {
         // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount);
 
         let config = &mut ctx.accounts.config;
-
-        // Paused check
         require!(!config.paused, ErrorCode::Paused);
-
-        // Mint sanity
         require!(ctx.accounts.zbtc_mint.key() == config.zbtc_mint, ErrorCode::InvalidZbtcMint);
         require!(ctx.accounts.sbtc_mint.key() == config.sbtc_mint, ErrorCode::InvalidSbtcMint);
-
-        // User owns token accounts
         require!(ctx.accounts.user_sbtc_account.owner == ctx.accounts.user.key(), ErrorCode::InvalidTokenAccountOwner);
         require!(ctx.accounts.user_zbtc_account.owner == ctx.accounts.user.key(), ErrorCode::InvalidTokenAccountOwner);
-
-        // Balance check
         require!(ctx.accounts.user_sbtc_account.amount >= sbtc_amount, ErrorCode::InsufficientBalance);
 
         // -- 3) Calculate zBTC to redeem
@@ -644,7 +649,7 @@ pub mod otc_swap {
 
         require!(zbtc_to_redeem_u128 > 0, ErrorCode::InvalidAmount);
         require!(zbtc_to_redeem_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
-        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;        
+        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;     
 
         // -- 4) Calculate fee and net redemption
         let fee_bps = config.fee_rate_bps as u128;
