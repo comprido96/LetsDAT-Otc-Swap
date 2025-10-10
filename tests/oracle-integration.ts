@@ -14,7 +14,6 @@ import {
   getOrCreateAssociatedTokenAccount,
   getMint,
 } from "@solana/spl-token";
-import { program } from '@coral-xyz/anchor/dist/cjs/native/system';
 
 
 describe("otc-swap-integration", () => {
@@ -28,7 +27,7 @@ describe("otc-swap-integration", () => {
   const connection = provider.connection;
   const admin = provider.wallet;
 
-  // Test constants
+  // === Test constants ===
   const ZBTC_DECIMALS = 8;
   const SBTC_DECIMALS = 8;
   const FEE_RATE_BPS = 500; // 5%
@@ -42,7 +41,7 @@ describe("otc-swap-integration", () => {
 
   const NEW_ORACLE_TREND = new BN(10_000_000);  // $100,000 in cents (100,000 * 100)
 
-  // Accounts
+  // === Accounts ===
   let sbtcMint: anchor.web3.PublicKey;
   let zbtcMint: anchor.web3.PublicKey;
 
@@ -59,7 +58,7 @@ describe("otc-swap-integration", () => {
   let pythPriceFeed: anchor.web3.PublicKey;
 
   before(async () => {
-    // Derive PDAs
+    // === Derive PDAs ===
     [configPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("config_v1"), admin.publicKey.toBuffer()],
       otcProgram.programId
@@ -87,7 +86,7 @@ describe("otc-swap-integration", () => {
   
     console.log(`configPda:${configPda} sbtcMintAuthorityPda:${sbtcMintAuthorityPda} treasuryAuthorityPda:${treasuryAuthorityPda} feeAuthorityPda:${feeAuthorityPda}`);
 
-    // Create mints
+    // === Create mints ===
     zbtcMint = await createMint(connection, admin.payer, admin.publicKey, null, ZBTC_DECIMALS);
     sbtcMint = await createMint(connection, admin.payer, admin.publicKey, admin.publicKey, SBTC_DECIMALS);
     console.log(`zbtcMint:${zbtcMint} sbtcMint:${sbtcMint}`);
@@ -98,7 +97,7 @@ describe("otc-swap-integration", () => {
         admin.payer,
         zbtcMint,
         treasuryAuthorityPda, // PDA as owner
-        true, // allowOwnerOffCurve - IMPORTANT for PDAs
+        true, // allowOwnerOffCurve - for PDAs
         undefined, // confirmOptions
         undefined, // programId (uses TOKEN_PROGRAM_ID)
         TOKEN_PROGRAM_ID // explicitly specify token program
@@ -109,8 +108,8 @@ describe("otc-swap-integration", () => {
         connection,
         admin.payer,
         zbtcMint,
-        feeAuthorityPda, // PDA as owner
-        true, // allowOwnerOffCurve - IMPORTANT for PDAs
+        feeAuthorityPda,
+        true,
         undefined,
         undefined,
         TOKEN_PROGRAM_ID
@@ -136,7 +135,7 @@ describe("otc-swap-integration", () => {
       [pythPriceAccount, admin.payer]
     );
 
-    // Initialize the price feed
+    // === Initialize the price feed ===
     await mockPyth.methods
       .initialize(INITIAL_PRICE, PRICE_EXPO, INITIAL_CONF)
       .accounts({
@@ -170,13 +169,12 @@ describe("otc-swap-integration", () => {
 
     const oracleState = await oracleProgram.account.oracleState.fetch(oracleStatePda);
     console.log("Oracle trend_value:", oracleState.trendValue.toString());
-    console.log("Expected: 10000000");
   });
 
   it("initialize", async () => {
     console.log("AYO INITIALIZE");
 
-    // Verify sBTC initially owned by admin (squad)
+    // === Verify sBTC initially owned by admin (squad) ===
     let mintInfo = await getMint(connection, sbtcMint);
     expect(mintInfo.mintAuthority?.equals(admin.publicKey)).to.be.true;
 
@@ -202,11 +200,11 @@ describe("otc-swap-integration", () => {
 
     console.log("Initialize tx:", tx);
 
-    // Verify sBTC authority was transferred to program PDA
+    // === Verify sBTC authority was transferred to program PDA ===
     mintInfo = await getMint(connection, sbtcMint);
     expect(mintInfo.mintAuthority?.equals(sbtcMintAuthorityPda)).to.be.true;
 
-    // Verify vaults are correct
+    // === Verify vaults are correct ===
     const treasuryAccount = await getAccount(connection, treasuryZbtcVault);
     const feeAccount = await getAccount(connection, feeVault);
     expect(treasuryAccount.owner.equals(treasuryAuthorityPda)).to.be.true;
@@ -214,7 +212,7 @@ describe("otc-swap-integration", () => {
     expect(treasuryAccount.mint.equals(zbtcMint)).to.be.true;
     expect(feeAccount.mint.equals(zbtcMint)).to.be.true;
 
-    // Verify config was stored
+    // === Verify config was stored ===
     const config = await otcProgram.account.config.fetch(configPda);
     expect(config.squadMultisig.equals(admin.publicKey)).to.be.true;
     expect(config.sbtcMint.equals(sbtcMint)).to.be.true;
@@ -230,23 +228,23 @@ describe("otc-swap-integration", () => {
   it("mint", async () => {
     console.log("AYO MINT");
 
-    // Create user
+    // === Create user ===
     let user = Keypair.generate();
     console.log(`user:${user.publicKey.toBase58()}`);
     await connection.requestAirdrop(user.publicKey, 1e9);
 
-    // Create token accounts
+    // === Create token accounts ===
     let userZbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, zbtcMint, user.publicKey);
     let userSbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, sbtcMint, user.publicKey);
     console.log(`userZbtcAccount:${userZbtcAccount} userSbtcAccount:${userSbtcAccount}`);
 
-    // Fund user with zBTC
+    // === Fund user with zBTC ===
     await mintTo(connection, admin.payer, zbtcMint, userZbtcAccount, admin.publicKey, 10_000_000_000);
 
-    // Fund treasury with zBTC
+    // === Fund treasury with zBTC ===
     await mintTo(connection, admin.payer, zbtcMint, treasuryZbtcVault, admin.publicKey, 10_000_000_000);
 
-    // Update mock Pyth price
+    // === Update mock Pyth price ===
     await mockPyth.methods
     .setPrice(UPDATED_PRICE, UPDATED_CONF)
     .accounts({
@@ -257,8 +255,8 @@ describe("otc-swap-integration", () => {
 
     console.log("✅ Mock Pyth price updated.");
 
-    const deposit = new anchor.BN(100_000_000); // 1 zBTC (8 decimals)
-    const fee = deposit.toNumber() * FEE_RATE_BPS / 10_000; // 5% = 0.05 zBTC
+    const deposit = new anchor.BN(100_000_000); // (8 decimals)
+    const fee = deposit.toNumber() * FEE_RATE_BPS / 10_000;
     const netDeposit = deposit.toNumber() - fee;
 
     // Pre balances
@@ -299,7 +297,7 @@ describe("otc-swap-integration", () => {
 
     console.log("✅ sBTC minted successfully, tx:", tx);
 
-    // Post balances
+    // === Post balances ===
     const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
     const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
     const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
@@ -319,7 +317,7 @@ describe("otc-swap-integration", () => {
     expect(postFee.toString()).to.equal((Number(preFee) + fee).toString());
     expect(postUserSbtc > preUserSbtc).to.be.true;
 
-    // Config check
+    // === Config check ===
     const config = await otcProgram.account.config.fetch(configPda);
     expect(config.totalSbtcOutstanding.toString()).to.equal(postUserSbtc.toString());
   });
@@ -327,23 +325,23 @@ describe("otc-swap-integration", () => {
   it("burn", async () => {
     console.log("AYO BURN");
 
-    // Create user
+    // === Create user ===
     let user = Keypair.generate();
     console.log(`user:${user.publicKey.toBase58()}`);
     await connection.requestAirdrop(user.publicKey, 1e9);
 
-    // Create token accounts
+    // === Create token accounts ===
     let userZbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, zbtcMint, user.publicKey);
     let userSbtcAccount = await createAssociatedTokenAccount(connection, admin.payer, sbtcMint, user.publicKey);
     console.log(`userZbtcAccount:${userZbtcAccount} userSbtcAccount:${userSbtcAccount}`);
 
-    // Fund user with zBTC
+    // === Fund user with zBTC ===
     await mintTo(connection, admin.payer, zbtcMint, userZbtcAccount, admin.publicKey, 10_000_000_000);
 
-    // Fund treasury with zBTC
+    // === Fund treasury with zBTC ===
     await mintTo(connection, admin.payer, zbtcMint, treasuryZbtcVault, admin.publicKey, 10_000_000_000);
 
-    // Update mock Pyth price
+    // === Update mock Pyth price ===
     await mockPyth.methods
     .setPrice(UPDATED_PRICE, UPDATED_CONF)
     .accounts({
@@ -352,11 +350,10 @@ describe("otc-swap-integration", () => {
     } as any)
     .rpc();
 
-  console.log("✅ Mock Pyth price updated.");
+    console.log("✅ Mock Pyth price updated.");
 
-    const zbtcAmount = new anchor.BN(100_000_000); // 1 zBTC (8 decimals)
-    const fee = zbtcAmount.toNumber() * FEE_RATE_BPS / 10_000; // 5% = 0.05 zBTC
-    const netDeposit = zbtcAmount.toNumber() - fee;
+    const zbtcAmount = new anchor.BN(100_000_000); // (8 decimals)
+    let fee = zbtcAmount.toNumber() * FEE_RATE_BPS / 10_000;
 
     const mintTx = await otcProgram.methods
     .mintSbtc(zbtcAmount)
@@ -383,18 +380,19 @@ describe("otc-swap-integration", () => {
     console.log("✅ sBTC minted successfully, tx:", mintTx);
 
     const burnAmount = new anchor.BN(50_000_000); // 0.5 sBTC
-    // 0.5 * $100,000 = $50,000
-    // transfer ($50,000 * 0.95) / $125,000 = 0.38 zBTC
     const sbtcToBurn = burnAmount.toNumber() / Math.pow(10, SBTC_DECIMALS);
     const sbtcPrice = NEW_ORACLE_TREND.toNumber() / 100;
     const discount = (10_000 - FEE_RATE_BPS) / 10_000;
     const zbtcPrice = UPDATED_PRICE.toNumber() / Math.pow(10, ZBTC_DECIMALS);
-    const netZbtc = (sbtcToBurn * sbtcPrice * discount / zbtcPrice) * Math.pow(10, ZBTC_DECIMALS); // 1:1 price assumption
+    const totZbtc = (sbtcToBurn * sbtcPrice / zbtcPrice) * Math.pow(10, ZBTC_DECIMALS);
+    const netZbtc = totZbtc * discount;
+    fee = totZbtc - netZbtc;
 
     console.log(`${sbtcToBurn} * ${sbtcPrice} * ${discount} / ${zbtcPrice} `);
     console.log(`netZbtc:${netZbtc}`);
+    console.log(`burn fee:${fee}`);
 
-    // Pre balances
+    // === Pre balances ===
     const preUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
     const preUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
     const preTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
@@ -432,7 +430,7 @@ describe("otc-swap-integration", () => {
 
       console.log("✅ sBTC burned successfully, tx:", burnTx);
 
-      // Post balances
+      // === Post balances ===
       const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
       const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
       const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
@@ -453,16 +451,16 @@ describe("otc-swap-integration", () => {
       // User should receive net zBTC (after fee)
       expect(Number(postUserZbtc)).to.equal(Number(preUserZbtc) + netZbtc);
       
-      // // Treasury should decrease by total zBTC value (net + fee)
-      // expect(Number(postTreasury)).to.equal(Number(preTreasury) - burnAmount.toNumber());
+      // Treasury should decrease by total zBTC value (net + fee)
+      expect(Number(postTreasury)).to.equal(Number(preTreasury) - (netZbtc + fee));
       
-      // // Fee vault should increase by fee amount
-      // expect(Number(postFee)).to.equal(Number(preFee) + fee);
-      
-      // // Total sBTC outstanding should decrease
-      // expect(postConfig.totalSbtcOutstanding.toString()).to.equal(
-      //   (Number(preConfig.totalSbtcOutstanding) - burnAmount.toNumber()).toString()
-      // );
+      // Fee vault should increase by fee amount
+      expect(Number(postFee)).to.equal(Number(preFee) + fee);
+
+      // Total sBTC outstanding should decrease
+      expect(postConfig.totalSbtcOutstanding.toString()).to.equal(
+        (Number(preConfig.totalSbtcOutstanding) - burnAmount.toNumber()).toString()
+      );
     }
     catch(e) {
       console.error("Error while burning.");

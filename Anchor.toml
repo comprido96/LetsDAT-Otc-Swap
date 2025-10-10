@@ -10,6 +10,12 @@ otc_swap = "DBHmndyfN4j7BtQsLaCR1SPd7iAXaf1ezUicDs3pUXS8"
 sbtc_oracle = "8UDq3zAd8RqqkVVpCS8bRbRuWUQyDD6ioVVmtYtUCy6y"
 mock_pyth = "4GvwyPdEK3PKGoUAhBbLmAgmwgEBi8UqQmEimm7d6Hzg"
 
+[programs.devnet]
+otc_swap = "DBHmndyfN4j7BtQsLaCR1SPd7iAXaf1ezUicDs3pUXS8"
+
+[programs.mainnet]
+otc_swap = "DBHmndyfN4j7BtQsLaCR1SPd7iAXaf1ezUicDs3pUXS8"
+
 [registry]
 url = "https://api.apr.dev"
 

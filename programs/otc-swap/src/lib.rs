@@ -21,7 +21,6 @@ pub mod otc_swap {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>, fee_rate_bps: u64, min_collateral_bps: u64) -> Result<()> {
-        // VALIDATION
         require!(fee_rate_bps <= 500, ErrorCode::InvalidFeeRate,); // Max 5%
         require!(min_collateral_bps >= 20_000, ErrorCode::InvalidCollateralRatio,); // 100 BPS == 1% --> 20_000 BPS == 200%
         require!(
@@ -29,13 +28,11 @@ pub mod otc_swap {
             ErrorCode::InvalidMintAuthority,
         );
 
-        // Check freeze authority
         require!(
             ctx.accounts.sbtc_mint.freeze_authority == COption::Some(ctx.accounts.squad_multisig.key()),
             ErrorCode::InvalidFreezeAuthority,
         );
 
-        // Check that the token accounts are for the expected mint (zBTC), and their owner is the token program or expected PDA
         require!(
             ctx.accounts.treasury_zbtc_vault.mint == ctx.accounts.zbtc_mint.key(),
             ErrorCode::InvalidZbtcMint,
@@ -59,7 +56,6 @@ pub mod otc_swap {
             Some(ctx.accounts.sbtc_mint_authority_pda.key())
         )?;
         
-        // STORE CONFIG
         let config = &mut ctx.accounts.config;
         config.squad_multisig = ctx.accounts.squad_multisig.key();
         config.sbtc_mint = ctx.accounts.sbtc_mint.key();
@@ -75,7 +71,6 @@ pub mod otc_swap {
         config.total_sbtc_outstanding = 0u128;
         config.created_at = Clock::get()?.unix_timestamp;
 
-        // EMIT EVENT
         emit!(InitializedEvent {
             squad_multisig: ctx.accounts.squad_multisig.key(),
             sbtc_mint: ctx.accounts.sbtc_mint.key(),
@@ -139,21 +134,17 @@ pub mod otc_swap {
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
         msg!("price: {:?}", price);
 
-        // Confidence check - ensure confidence is reasonable
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
         let zbtc_price_cents: u64 = if price.price >= 0 {
             // Pyth price format: actual_price = price * 10^expo
             // We want price in cents: price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
-            
             let actual_expo = price.expo + 2; // +2 to convert to cents
             
             if actual_expo >= 0 {
-                // Positive exponent: multiply
                 (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             } else {
-                // Negative exponent: divide
                 (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             }
@@ -162,11 +153,11 @@ pub mod otc_swap {
         };
         msg!("price in cents: {:?}", zbtc_price_cents);
 
-        // -- 4) Get sBTC price from your oracle
+        // -- 4) Get sBTC price from oracle
         let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
         msg!("DEBUG: Oracle account data length: {}", oracle_account_data.len());
 
-        // Print first 32 bytes to see the actual data
+        // DEBUG - print first 32 bytes to see the actual data
         let debug_bytes = &oracle_account_data[0..32.min(oracle_account_data.len())];
         msg!("DEBUG: First 32 bytes of oracle account: {:?}", debug_bytes);
 
@@ -349,6 +340,12 @@ pub mod otc_swap {
         // sbtc_to_mint = net_zbtc_value_usd / (sbtc_price_cents / 10^sbtc_decimals)
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
+
+        msg!("DEBUG: zbtc_price_cents: {}", zbtc_price_cents);
+        msg!("DEBUG: sbtc_price_cents: {}", sbtc_price_cents);
+        msg!("DEBUG: net_zbtc_u128: {}", net_zbtc_u128);
+        msg!("DEBUG: zbtc_decimals: {}", zbtc_decimals);
+        msg!("DEBUG: sbtc_decimals: {}", sbtc_decimals);
         
         // Convert net zBTC amount to USD value (in cents)
         let net_zbtc_value_cents = net_zbtc_u128
@@ -357,24 +354,23 @@ pub mod otc_swap {
             .checked_div(10u128.pow(zbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // Calculate sBTC to mint: (net_zbtc_value_cents * 10^sbtc_decimals) / sbtc_price_cents
-        let sbtc_to_mint_u128 = net_zbtc_value_cents
+        let sbtc_to_mint_u128 = net_zbtc_u128
+            .checked_mul(zbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
             .checked_mul(10u128.pow(sbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?
             .checked_div(sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10u128.pow(zbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
         require!(sbtc_to_mint_u128 > 0, ErrorCode::InvalidAmount);
         require!(sbtc_to_mint_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
         let sbtc_to_mint_u64 = sbtc_to_mint_u128 as u64;
 
-        // In your mint_sbtc function, after price conversions:
-        msg!("Debug - zbtc_amount: {}", zbtc_amount);
-        msg!("Debug - net_zbtc_u128: {}", net_zbtc_u128);
-        msg!("Debug - zbtc_price_cents: {}", zbtc_price_cents);
-        msg!("Debug - sbtc_price_cents: {}", sbtc_price_cents);
-        msg!("Debug - net_zbtc_value_cents: {}", net_zbtc_value_cents);
-        msg!("Debug - sbtc_to_mint_u128: {}", sbtc_to_mint_u128);
+        msg!("DEBUG: net_zbtc_value_cents: {}", net_zbtc_value_cents);
+        msg!("DEBUG: sbtc_to_mint_u128: {}", sbtc_to_mint_u128);
+        msg!("DEBUG: sbtc_to_mint_u64: {}", sbtc_to_mint_u64);
 
         // -- 6) Transfer zBTC to treasury and fee vault
         token::transfer(
@@ -467,7 +463,9 @@ pub mod otc_swap {
     }
 
     pub fn burn_sbtc(ctx: Context<BurnSbtc>, sbtc_amount: u64) -> Result<()> {
-        require!(sbtc_amount > 0, ErrorCode::InvalidAmount);
+        require!(sbtc_amount > 0, ErrorCode::InvalidAmount); // maybe put a lower limit on sBTC when mint/burn to avoid dust
+        // like this:
+        // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount);
 
         let config = &mut ctx.accounts.config;
         require!(!config.paused, ErrorCode::Paused);
@@ -487,15 +485,14 @@ pub mod otc_swap {
 
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
-        let max_age = 300u64; // Consistent with mint: 5 minutes
+        let max_age = 300u64;
 
         let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
 
-        // Confidence check
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
-        // Convert Pyth price to cents (USD) - Consistent with mint
+        // Convert Pyth price to cents (USD)
         let zbtc_price_cents: u64 = if price.price >= 0 {
             let actual_expo = price.expo + 2;
             
@@ -517,14 +514,13 @@ pub mod otc_swap {
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
 
-        // Check if oracle data is recent enough
         require!(current_time - last_update <= 300, ErrorCode::StaleOraclePrice);
 
-        // -- 3) Calculate zBTC to redeem - Use consistent formula with mint
+        // -- 3) Calculate zBTC to redeem
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
         
-        // Consistent calculation: zbtc_to_redeem = (sbtc_amount * sbtc_price_cents * 10^zbtc_decimals) / (zbtc_price_cents * 10^sbtc_decimals)
+        // zbtc_to_redeem = (sbtc_amount * sbtc_price_cents * 10^zbtc_decimals) / (zbtc_price_cents * 10^sbtc_decimals)
         let zbtc_to_redeem_u128 = (sbtc_amount as u128)
             .checked_mul(sbtc_price_cents as u128)
             .ok_or(ErrorCode::InvalidAmount)?
@@ -611,7 +607,7 @@ pub mod otc_swap {
             .checked_sub(sbtc_amount as u128)
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // -- 10) Optional: Collateral check after burn (like in mint)
+        // -- 10) Collateral check after burn
         let treasury_balance = ctx.accounts.treasury_zbtc_vault.amount as u128;
         
         let required_zbtc_minor = config.total_sbtc_outstanding
@@ -646,6 +642,7 @@ pub mod otc_swap {
 
         Ok(())
     }
+
     pub fn burn_sbtc_test(
         ctx: Context<BurnSbtcTest>,
         sbtc_amount: u64,
@@ -670,24 +667,21 @@ pub mod otc_swap {
         
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
-        
-        // Convert sBTC amount to USD value (in cents)
-        let sbtc_value_cents = (sbtc_amount as u128)
+
+        // zbtc_to_redeem = (sbtc_amount * sbtc_price_cents * 10^zbtc_decimals) / (zbtc_price_cents * 10^sbtc_decimals)
+        let zbtc_to_redeem_u128 = (sbtc_amount as u128)
             .checked_mul(mock_sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_mul(10u128.pow(zbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(mock_zbtc_price_cents as u128)
             .ok_or(ErrorCode::InvalidAmount)?
             .checked_div(10u128.pow(sbtc_decimals as u32))
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // Calculate zBTC to redeem: (sbtc_value_cents * 10^zbtc_decimals) / zbtc_price_cents
-        let zbtc_to_redeem_u128 = sbtc_value_cents
-            .checked_mul(10u128.pow(zbtc_decimals as u32))
-            .ok_or(ErrorCode::InvalidAmount)?
-            .checked_div(mock_zbtc_price_cents as u128)
-            .ok_or(ErrorCode::InvalidAmount)?;
-
         require!(zbtc_to_redeem_u128 > 0, ErrorCode::InvalidAmount);
         require!(zbtc_to_redeem_u128 <= u64::MAX as u128, ErrorCode::InvalidAmount);
-        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;     
+        let zbtc_to_redeem_u64 = zbtc_to_redeem_u128 as u64;
 
         // -- 4) Calculate fee and net redemption
         let fee_bps = config.fee_rate_bps as u128;
@@ -761,7 +755,29 @@ pub mod otc_swap {
             .checked_sub(sbtc_amount as u128)
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // -- 10) Emit event
+        // -- 10) Collateral check after burn
+        let treasury_balance = ctx.accounts.treasury_zbtc_vault.amount as u128;
+        
+        let required_zbtc_minor = config.total_sbtc_outstanding
+            .checked_mul(mock_sbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_mul(10u128.pow(zbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(mock_zbtc_price_cents as u128)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10u128.pow(sbtc_decimals as u32))
+            .ok_or(ErrorCode::InvalidAmount)?;
+
+        let min_collateral_bps = config.min_collateral_bps as u128;
+        let required_zbtc_with_buffer = required_zbtc_minor
+            .checked_mul(min_collateral_bps)
+            .ok_or(ErrorCode::InvalidAmount)?
+            .checked_div(10_000u128)
+            .ok_or(ErrorCode::InvalidAmount)?;
+
+        require!(treasury_balance >= required_zbtc_with_buffer, ErrorCode::InsufficientCollateral);
+
+        // -- 11) Emit event
         emit!(BurnEvent {
             user: ctx.accounts.user.key(),
             sbtc_burned: sbtc_amount,
@@ -842,7 +858,7 @@ pub struct MintSbtc<'info> {
     #[account(
         mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
-        bump = config.bump, // Only store this one bump
+        bump = config.bump,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
     )]
     pub config: Account<'info, Config>,
@@ -854,14 +870,15 @@ pub struct MintSbtc<'info> {
     #[account(mut)]
     pub sbtc_mint: Account<'info, Mint>,
 
-    // User token accounts
+    // User token account
     #[account(
         mut, 
         constraint = user_zbtc_account.mint == zbtc_mint.key() @ ErrorCode::InvalidTokenMint,
         constraint = user_zbtc_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
     )]
     pub user_zbtc_account: Account<'info, TokenAccount>,
-    
+
+    // User token account
     #[account(
         mut, 
         constraint = user_sbtc_account.mint == sbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -890,21 +907,21 @@ pub struct MintSbtc<'info> {
     /// CHECK: PDA for sBTC mint authority
     #[account(
         seeds = [b"sbtc_mint_authority", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub sbtc_mint_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for treasury token account
     #[account(
         seeds = [b"treasury_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub treasury_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for fee token account
     #[account(
         seeds = [b"fee_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
@@ -929,7 +946,7 @@ pub struct BurnSbtc<'info> {
 
     // Config PDA derived from squad_multisig
     #[account(
-        mut, // ← Need mut to update total_sbtc_outstanding
+        mut, // need mut to update total_sbtc_outstanding
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
         bump = config.bump,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
@@ -943,14 +960,15 @@ pub struct BurnSbtc<'info> {
     #[account(mut)]
     pub sbtc_mint: Account<'info, Mint>,
 
-    // User accounts
+    // User token account
     #[account(
         mut,
         constraint = user_zbtc_account.mint == zbtc_mint.key() @ ErrorCode::InvalidTokenMint,
         constraint = user_zbtc_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
     )]
     pub user_zbtc_account: Account<'info, TokenAccount>,
-    
+
+    // User token account
     #[account(
         mut,
         constraint = user_sbtc_account.mint == sbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -958,7 +976,7 @@ pub struct BurnSbtc<'info> {
     )]
     pub user_sbtc_account: Account<'info, TokenAccount>,
 
-    // Treasury vault - NOT a PDA, regular token account
+    // Treasury vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -967,7 +985,7 @@ pub struct BurnSbtc<'info> {
     )]
     pub treasury_zbtc_vault: Account<'info, TokenAccount>,
 
-    // Fee vault - NOT a PDA, regular token account  
+    // Fee vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -979,14 +997,14 @@ pub struct BurnSbtc<'info> {
     /// CHECK: PDA used as authority for treasury token account
     #[account(
         seeds = [b"treasury_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor finds bump automatically
+        bump,
     )]
     pub treasury_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for fee token account  
     #[account(
         seeds = [b"fee_auth_v1", squad_multisig.key().as_ref()],
-        bump, // Anchor finds bump automatically
+        bump,
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
@@ -1013,7 +1031,7 @@ pub struct Config {
     pub sbtc_decimals: u8,
     pub zbtc_decimals: u8,
     pub paused: bool,
-    pub total_sbtc_outstanding: u128, // track outstanding sBTC minted
+    pub total_sbtc_outstanding: u128,
     pub created_at: i64,
 }
 
@@ -1036,7 +1054,7 @@ pub struct MintSbtcTest<'info> {
     #[account(
         mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
-        bump = config.bump, // Only store this one bump
+        bump = config.bump,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
     )]
     pub config: Account<'info, Config>,
@@ -1084,21 +1102,21 @@ pub struct MintSbtcTest<'info> {
     /// CHECK: PDA for sBTC mint authority
     #[account(
         seeds = [b"sbtc_mint_authority", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub sbtc_mint_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for treasury token account
     #[account(
         seeds = [b"treasury_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub treasury_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for fee token account
     #[account(
         seeds = [b"fee_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor will find the bump automatically
+        bump,
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
@@ -1117,7 +1135,7 @@ pub struct BurnSbtcTest<'info> {
 
     // Config PDA derived from squad_multisig
     #[account(
-        mut, // ← Need mut to update total_sbtc_outstanding
+        mut, // need mut to update total_sbtc_outstanding
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
         bump = config.bump,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
@@ -1131,14 +1149,15 @@ pub struct BurnSbtcTest<'info> {
     #[account(mut)]
     pub sbtc_mint: Account<'info, Mint>,
 
-    // User accounts
+    // User token account
     #[account(
         mut,
         constraint = user_zbtc_account.mint == zbtc_mint.key() @ ErrorCode::InvalidTokenMint,
         constraint = user_zbtc_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
     )]
     pub user_zbtc_account: Account<'info, TokenAccount>,
-    
+
+    // User token account
     #[account(
         mut,
         constraint = user_sbtc_account.mint == sbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -1146,7 +1165,7 @@ pub struct BurnSbtcTest<'info> {
     )]
     pub user_sbtc_account: Account<'info, TokenAccount>,
 
-    // Treasury vault - NOT a PDA, regular token account
+    // Treasury vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -1155,7 +1174,7 @@ pub struct BurnSbtcTest<'info> {
     )]
     pub treasury_zbtc_vault: Account<'info, TokenAccount>,
 
-    // Fee vault - NOT a PDA, regular token account  
+    // Fee vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -1166,15 +1185,15 @@ pub struct BurnSbtcTest<'info> {
 
     /// CHECK: PDA used as authority for treasury token account
     #[account(
-        seeds = [b"treasury_auth_v1", squad_multisig.key().as_ref()], 
-        bump, // Anchor finds bump automatically
+        seeds = [b"treasury_auth_v1", squad_multisig.key().as_ref()],
+        bump,
     )]
     pub treasury_authority_pda: UncheckedAccount<'info>,
 
     /// CHECK: PDA used as authority for fee token account  
     #[account(
         seeds = [b"fee_auth_v1", squad_multisig.key().as_ref()],
-        bump, // Anchor finds bump automatically
+        bump,
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
@@ -1240,12 +1259,6 @@ pub enum ErrorCode {
     InvalidTokenMint,
     #[msg("Insufficient balance")]
     InsufficientBalance,
-    #[msg("Oracle price invalid")]
-    InvalidOraclePrice,
-    #[msg("Oracle confidence too large")]
-    InvalidOracleConfidence,
-    #[msg("Oracle data invalid")]
-    InvalidOracle,
     #[msg("Protocol paused")]
     Paused,
     #[msg("Insufficient liquidity")]
