@@ -5,8 +5,10 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "test:integration": "anchor test --skip-local-validator --skip-deploy",
     "test:local": "anchor test",
+    "test:dev": "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/devnet-integration.ts",
     "build": "anchor build",
-    "deploy:local": "anchor deploy --provider.cluster localnet"
+    "deploy:local": "anchor deploy --provider.cluster localnet",
+    "deploy:dev": "anchor deploy -p otc-swap --provider.cluster devnet"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
