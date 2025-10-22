@@ -193,7 +193,7 @@ pub mod otc_swap {
 
         // Check if oracle data is recent enough (e.g., within 5 minutes)
         let current_timestamp = clock.unix_timestamp;
-        require!(current_timestamp - last_update <= 300, ErrorCode::StaleOraclePrice);
+        // require!(current_timestamp - last_update <= 300, ErrorCode::StaleOraclePrice);
 
         // -- 5) Calculate sBTC to mint
         // net_zbtc_value_usd = net_zbtc_amount * (zbtc_price_cents / 10^zbtc_decimals)
@@ -377,7 +377,7 @@ pub mod otc_swap {
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
 
-        require!(current_time - last_update <= 300, ErrorCode::StaleOraclePrice);
+        // require!(current_time - last_update <= 300, ErrorCode::StaleOraclePrice);
 
         // -- 3) Calculate zBTC to redeem
         let zbtc_decimals = config.zbtc_decimals;

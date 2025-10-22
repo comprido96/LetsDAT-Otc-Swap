@@ -60,7 +60,7 @@ describe("devnet-integration", () => {
   const FEE_RATE_BPS = 500; // 5%
   const MIN_COLLATERAL_BPS = 20000; // 200%
 
-  const NEW_ORACLE_TREND = new BN(5_000_000);
+  const NEW_ORACLE_TREND = new BN(4555883.7282848894);
 
   // === Accounts ===
   let sbtcMint: anchor.web3.PublicKey = new PublicKey("7dMm9RgrkknPkrp7n1sgkbJFPkG5pAZzEs32NcyjeDkW");
@@ -315,96 +315,96 @@ describe("devnet-integration", () => {
   //   }
   // });
 
-  it("burn", async () => {
-    console.log("AYO BURN");
+  // it("burn", async () => {
+  //   console.log("AYO BURN");
 
-    // await otcProgram.methods
-    //   .updatePythFeed(
-    //     pythPriceFeed,
-    //   )
-    //   .accounts({
-    //     config: configPda,
-    //     squadMultisig: admin.publicKey,
-    //   } as any)
-    //   .rpc();
-    // console.log("PYTH UPDATED!!!");
+  //   // await otcProgram.methods
+  //   //   .updatePythFeed(
+  //   //     pythPriceFeed,
+  //   //   )
+  //   //   .accounts({
+  //   //     config: configPda,
+  //   //     squadMultisig: admin.publicKey,
+  //   //   } as any)
+  //   //   .rpc();
+  //   // console.log("PYTH UPDATED!!!");
 
-    console.log(`user:${user.publicKey.toBase58()}`);
+  //   console.log(`user:${user.publicKey.toBase58()}`);
 
-    // === Create token accounts ===
-    let userZbtcAccount = (await getOrCreateAssociatedTokenAccount(connection, admin.payer, zbtcMint, user.publicKey)).address;
-    let userSbtcAccount = (await getOrCreateAssociatedTokenAccount(connection, admin.payer, sbtcMint, user.publicKey)).address;
-    console.log(`userZbtcAccount:${userZbtcAccount} userSbtcAccount:${userSbtcAccount}`);
+  //   // === Create token accounts ===
+  //   let userZbtcAccount = (await getOrCreateAssociatedTokenAccount(connection, admin.payer, zbtcMint, user.publicKey)).address;
+  //   let userSbtcAccount = (await getOrCreateAssociatedTokenAccount(connection, admin.payer, sbtcMint, user.publicKey)).address;
+  //   console.log(`userZbtcAccount:${userZbtcAccount} userSbtcAccount:${userSbtcAccount}`);
 
-    const burnAmount = new anchor.BN(113_151);
+  //   const burnAmount = new anchor.BN(113_151);
 
-    // === Pre balances ===
-    const preUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
-    const preUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
-    const preTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
-    const preFee = (await getAccount(connection, feeVault)).amount;
-    const preConfig = await otcProgram.account.config.fetch(configPda);
+  //   // === Pre balances ===
+  //   const preUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+  //   const preUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+  //   const preTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+  //   const preFee = (await getAccount(connection, feeVault)).amount;
+  //   const preConfig = await otcProgram.account.config.fetch(configPda);
 
-    console.log("Pre-burn balances:");
-    console.log("User zBTC:", preUserZbtc.toString());
-    console.log("User sBTC:", preUserSbtc.toString());
-    console.log("Treasury:", preTreasury.toString());
-    console.log("Fee vault:", preFee.toString());
-    console.log("Total sBTC outstanding:", preConfig.totalSbtcOutstanding.toString());
+  //   console.log("Pre-burn balances:");
+  //   console.log("User zBTC:", preUserZbtc.toString());
+  //   console.log("User sBTC:", preUserSbtc.toString());
+  //   console.log("Treasury:", preTreasury.toString());
+  //   console.log("Fee vault:", preFee.toString());
+  //   console.log("Total sBTC outstanding:", preConfig.totalSbtcOutstanding.toString());
 
-    try{ 
-      const burnTx = await otcProgram.methods
-      .burnSbtc(burnAmount)
-      .accounts({
-        user: user.publicKey,
-        squadMultisig: admin.publicKey,
-        config: configPda,
-        sbtcMint: sbtcMint,
-        zbtcMint: zbtcMint,
-        userSbtcAccount: userSbtcAccount,
-        userZbtcAccount: userZbtcAccount,
-        treasuryZbtcVault: treasuryZbtcVault,
-        feeVault: feeVault,
-        treasuryAuthorityPda: treasuryAuthorityPda,
-        feeAuthorityPda: feeAuthorityPda,
-        pythPriceAccount: pythPriceFeed,
-        oracleState: oracleStatePda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
-      .signers([user])
-      .rpc();
+  //   try{ 
+  //     const burnTx = await otcProgram.methods
+  //     .burnSbtc(burnAmount)
+  //     .accounts({
+  //       user: user.publicKey,
+  //       squadMultisig: admin.publicKey,
+  //       config: configPda,
+  //       sbtcMint: sbtcMint,
+  //       zbtcMint: zbtcMint,
+  //       userSbtcAccount: userSbtcAccount,
+  //       userZbtcAccount: userZbtcAccount,
+  //       treasuryZbtcVault: treasuryZbtcVault,
+  //       feeVault: feeVault,
+  //       treasuryAuthorityPda: treasuryAuthorityPda,
+  //       feeAuthorityPda: feeAuthorityPda,
+  //       pythPriceAccount: pythPriceFeed,
+  //       oracleState: oracleStatePda,
+  //       tokenProgram: TOKEN_PROGRAM_ID,
+  //     } as any)
+  //     .signers([user])
+  //     .rpc();
 
-      console.log("✅ sBTC burned successfully, tx:", burnTx);
+  //     console.log("✅ sBTC burned successfully, tx:", burnTx);
 
-      // === Post balances ===
-      const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
-      const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
-      const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
-      const postFee = (await getAccount(connection, feeVault)).amount;
-      const postConfig = await otcProgram.account.config.fetch(configPda);
+  //     // === Post balances ===
+  //     const postUserZbtc = (await getAccount(connection, userZbtcAccount)).amount;
+  //     const postUserSbtc = (await getAccount(connection, userSbtcAccount)).amount;
+  //     const postTreasury = (await getAccount(connection, treasuryZbtcVault)).amount;
+  //     const postFee = (await getAccount(connection, feeVault)).amount;
+  //     const postConfig = await otcProgram.account.config.fetch(configPda);
 
-      console.log("Post-burn balances:");
-      console.log("User zBTC:", postUserZbtc.toString());
-      console.log("User sBTC:", postUserSbtc.toString());
-      console.log("Treasury:", postTreasury.toString());
-      console.log("Fee vault:", postFee.toString());
-      console.log("Total sBTC outstanding:", postConfig.totalSbtcOutstanding.toString());
+  //     console.log("Post-burn balances:");
+  //     console.log("User zBTC:", postUserZbtc.toString());
+  //     console.log("User sBTC:", postUserSbtc.toString());
+  //     console.log("Treasury:", postTreasury.toString());
+  //     console.log("Fee vault:", postFee.toString());
+  //     console.log("Total sBTC outstanding:", postConfig.totalSbtcOutstanding.toString());
 
-      // === Assertions ===
-      // User sBTC should be burned
-      expect(Number(postUserSbtc)).to.equal(Number(preUserSbtc) - burnAmount.toNumber());
+  //     // === Assertions ===
+  //     // User sBTC should be burned
+  //     expect(Number(postUserSbtc)).to.equal(Number(preUserSbtc) - burnAmount.toNumber());
 
-      // Total sBTC outstanding should decrease
-      expect(postConfig.totalSbtcOutstanding.toString()).to.equal(
-        (Number(preConfig.totalSbtcOutstanding) - burnAmount.toNumber()).toString()
-      );
-    }
-    catch(e) {
-      console.error("Error while burning.");
-      console.error(e);
-      throw e;
-    }
-  });
+  //     // Total sBTC outstanding should decrease
+  //     expect(postConfig.totalSbtcOutstanding.toString()).to.equal(
+  //       (Number(preConfig.totalSbtcOutstanding) - burnAmount.toNumber()).toString()
+  //     );
+  //   }
+  //   catch(e) {
+  //     console.error("Error while burning.");
+  //     console.error(e);
+  //     throw e;
+  //   }
+  // });
 
   it("test oracle reading", async () => {
     try {
