@@ -134,7 +134,7 @@ pub mod otc_swap {
         msg!("DEBUG: Fee calculation complete");
 
         // -- 3) read & validatezBTC/USD price from Pyth feed
-        let pyth_account = &ctx.accounts.pyth_price_account;
+        let pyth_account = &ctx.accounts.authorized_zbtc_pyth_feed;
 
         let price_feed: PriceFeed = SolanaPriceAccount::account_info_to_feed(pyth_account)
             .map_err(|e: PythError| {
@@ -175,7 +175,7 @@ pub mod otc_swap {
         msg!("DEBUG: Pyth price conversion complete");
 
         // -- 4) Get sBTC price from oracle
-        let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
+        let oracle_account_data = ctx.accounts.authorized_sbtc_oracle_state_pda.try_borrow_data()?;
         msg!("DEBUG: Oracle account data length: {}", oracle_account_data.len());
 
         // CRITICAL: Check account has enough data before slicing
@@ -333,7 +333,7 @@ pub mod otc_swap {
         require!(ctx.accounts.user_sbtc_account.amount >= sbtc_amount, ErrorCode::InsufficientBalance);
 
         // -- 1) Get zBTC/USD price from Pyth
-        let pyth_account = &ctx.accounts.pyth_price_account;
+        let pyth_account = &ctx.accounts.authorized_zbtc_pyth_feed;
         let price_feed: PriceFeed = SolanaPriceAccount::account_info_to_feed(pyth_account)
             .map_err(|e: PythError| {
                 msg!("Pyth error: {:?}", e);
@@ -368,7 +368,7 @@ pub mod otc_swap {
         };
 
         // -- 2) Get sBTC price from your oracle
-        let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
+        let oracle_account_data = ctx.accounts.authorized_sbtc_oracle_state_pda.try_borrow_data()?;
         let oracle_data = &oracle_account_data[8..];
         
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
@@ -566,6 +566,8 @@ pub struct MintSbtc<'info> {
         mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
         bump = config.bump,
+        has_one = authorized_zbtc_pyth_feed @ ErrorCode::InvalidOracleAccount,
+        has_one = authorized_sbtc_oracle_state_pda @ ErrorCode::InvalidOracleAccount,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
     )]
     pub config: Box<Account<'info, Config>>,
@@ -626,11 +628,11 @@ pub struct MintSbtc<'info> {
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
-    /// CHECK: price account for the oracle (Pyth-style)
-    pub pyth_price_account: UncheckedAccount<'info>,
+    /// CHECK: verified via has_one on config
+    pub authorized_zbtc_pyth_feed: UncheckedAccount<'info>,
 
-    /// CHECK: We're manually deserializing this account
-    pub oracle_state: AccountInfo<'info>,
+    /// CHECK: verified via has_one on config
+    pub authorized_sbtc_oracle_state_pda: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -647,6 +649,8 @@ pub struct BurnSbtc<'info> {
         mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
         bump = config.bump,
+        has_one = authorized_zbtc_pyth_feed @ ErrorCode::InvalidOracleAccount,
+        has_one = authorized_sbtc_oracle_state_pda @ ErrorCode::InvalidOracleAccount,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
     )]
     pub config: Box<Account<'info, Config>>,
@@ -700,11 +704,11 @@ pub struct BurnSbtc<'info> {
     )]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
-    /// CHECK: price account for the oracle (Pyth-style)
-    pub pyth_price_account: UncheckedAccount<'info>,
+    /// CHECK: verified via has_one on config
+    pub authorized_zbtc_pyth_feed: UncheckedAccount<'info>,
 
-    /// CHECK: We're manually deserializing this account
-    pub oracle_state: AccountInfo<'info>,
+    /// CHECK: verified via has_one on config
+    pub authorized_sbtc_oracle_state_pda: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -806,6 +810,8 @@ pub enum ErrorCode {
     InvalidTokenOwner,
     #[msg("Pyth oracle error")]
     PythError,
+    #[msg("Invalid oracle account")]
+    InvalidOracleAccount,
     #[msg("Invalid oracle data")]
     InvalidOracleData,
     #[msg("Stale price data")]
