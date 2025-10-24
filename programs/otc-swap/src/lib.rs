@@ -14,6 +14,11 @@ use pyth_sdk_solana::{Price, PriceFeed, PythError};
 use pyth_sdk_solana::state::SolanaPriceAccount;
 
 
+const CONFIG_MAX_FEE_RATE_BPS: u64 = 500;
+const CONFIG_MIN_COLLATERAL_BPS: u64 = 20_000;
+const ORACLE_MAX_AGE: u64 = 300;
+
+
 declare_id!("DBHmndyfN4j7BtQsLaCR1SPd7iAXaf1ezUicDs3pUXS8");
 
 #[program]
@@ -27,8 +32,8 @@ pub mod otc_swap {
         authorized_zbtc_pyth_feed: Pubkey,
         authorized_sbtc_oracle_state_pda: Pubkey,
     ) -> Result<()> {
-        require!(fee_rate_bps <= 500, ErrorCode::InvalidFeeRate,); // Max 5%
-        require!(min_collateral_bps >= 20_000, ErrorCode::InvalidCollateralRatio,); // 100 BPS == 1% --> 20_000 BPS == 200%
+        require!(fee_rate_bps <= CONFIG_MAX_FEE_RATE_BPS, ErrorCode::InvalidFeeRate,);
+        require!(min_collateral_bps >= CONFIG_MIN_COLLATERAL_BPS, ErrorCode::InvalidCollateralRatio,);
         require!(
             ctx.accounts.sbtc_mint.mint_authority == COption::Some(ctx.accounts.squad_multisig.key()),
             ErrorCode::InvalidMintAuthority,
@@ -103,10 +108,7 @@ pub mod otc_swap {
         msg!("=== START MINT_SBTC ===");
 
         // -- 1) basic validation
-        require!(zbtc_amount > 0, ErrorCode::InvalidAmount); // maybe put a lower limit on sBTC when mint/burn to avoid dust
-        // like this:
-        // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount); 
-
+        require!(zbtc_amount > 0, ErrorCode::InvalidAmount);
         let config: &mut Account<'_, Config> = &mut ctx.accounts.config;
 
         require!(!config.paused, ErrorCode::Paused);
@@ -118,12 +120,12 @@ pub mod otc_swap {
         msg!("DEBUG: Passed all account validations");
 
         // -- 2) compute fee and net deposit (u128 math)
-        let fee_bps = config.fee_rate_bps as u128; // bps: e.g. 500 means 5.00%
+        let fee_bps = config.fee_rate_bps as u128;
         let zbtc_amount_u128 = zbtc_amount as u128;
         let fee_amount_u128 = zbtc_amount_u128
             .checked_mul(fee_bps)
             .ok_or(ErrorCode::InvalidAmount)?
-            .checked_div(10_000u128) // using 10_000 bps base
+            .checked_div(10_000u128) // using bps base
             .ok_or(ErrorCode::InvalidAmount)?;
 
         let fee_amount_u64 = fee_amount_u128 as u64; // safe because fee <= zbtc_amount which is u64
@@ -143,12 +145,11 @@ pub mod otc_swap {
 
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
-        let max_age = 300u64;
+        let max_age = ORACLE_MAX_AGE;
 
         // mainnet only
         // let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
         let current_price_opt: Option<Price> = Some(price_feed.get_price_unchecked());
-
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
         msg!("price: {:?}", price);
 
@@ -157,7 +158,7 @@ pub mod otc_swap {
 
         let zbtc_price_cents: u64 = if price.price >= 0 {
             // Pyth price format: actual_price = price * 10^expo
-            // We want price in cents: price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
+            // price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
             let actual_expo = price.expo + 2; // +2 to convert to cents
             
             if actual_expo >= 0 {
@@ -180,7 +181,7 @@ pub mod otc_swap {
         // CRITICAL: Check account has enough data before slicing
         require!(oracle_account_data.len() >= 24, ErrorCode::InvalidOracleData); // 8 discriminator + 8 trend_value + 8 last_update
 
-        let _discriminator = &oracle_account_data[0..8]; // This should be safe
+        let _discriminator = &oracle_account_data[0..8];
         msg!("DEBUG: Discriminator read successfully");
 
         let oracle_data = &oracle_account_data[8..]; // Skip discriminator
@@ -191,14 +192,11 @@ pub mod otc_swap {
         msg!("DEBUG: Read sbtc_price_cents: {}", sbtc_price_cents);
         msg!("DEBUG: Read last_update: {}", last_update);
 
-        // Check if oracle data is recent enough (e.g., within 5 minutes)
+        // mainnet only - check if oracle data is recent enough
         let current_timestamp = clock.unix_timestamp;
         // require!(current_timestamp - last_update <= 300, ErrorCode::StaleOraclePrice);
 
-        // -- 5) Calculate sBTC to mint
-        // net_zbtc_value_usd = net_zbtc_amount * (zbtc_price_cents / 10^zbtc_decimals)
-        // sbtc_to_mint = net_zbtc_value_usd / (sbtc_price_cents / 10^sbtc_decimals)
-        
+        // -- 5) Calculate sBTC to mint        
         let zbtc_decimals = config.zbtc_decimals;
         let sbtc_decimals = config.sbtc_decimals;
 
@@ -285,7 +283,7 @@ pub mod otc_swap {
             .checked_add(sbtc_to_mint_u64 as u128)
             .ok_or(ErrorCode::InvalidAmount)?;
 
-        // -- 9) Collateral check (simplified version)
+        // -- 9) Collateral check
         let treasury_balance = ctx.accounts.treasury_zbtc_vault.amount as u128;
         
         // Calculate required collateral: total_sbtc_outstanding * sbtc_price / zbtc_price
@@ -324,9 +322,7 @@ pub mod otc_swap {
     }
 
     pub fn burn_sbtc(ctx: Context<BurnSbtc>, sbtc_amount: u64) -> Result<()> {
-        require!(sbtc_amount > 0, ErrorCode::InvalidAmount); // maybe put a lower limit on sBTC when mint/burn to avoid dust
-        // like this:
-        // require!(sbtc_amount >= 10u64.pow(config.sbtc_decimals as u32) / 1000, ErrorCode::InvalidAmount);
+        require!(sbtc_amount > 0, ErrorCode::InvalidAmount);
 
         let config = &mut ctx.accounts.config;
         require!(!config.paused, ErrorCode::Paused);
@@ -346,12 +342,13 @@ pub mod otc_swap {
 
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
-        let max_age = 300u64;
+        let max_age = ORACLE_MAX_AGE;
 
         // mainnet only
         // let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
         let current_price_opt: Option<Price> = Some(price_feed.get_price_unchecked());
         let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
+        msg!("price: {:?}", price);
 
         require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
 
@@ -377,6 +374,7 @@ pub mod otc_swap {
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
 
+        // mainnet only
         // require!(current_time - last_update <= 300, ErrorCode::StaleOraclePrice);
 
         // -- 3) Calculate zBTC to redeem
@@ -506,76 +504,6 @@ pub mod otc_swap {
         Ok(())
     }
 
-    pub fn test_oracle_reading(ctx: Context<TestOracle>) -> Result<()> {
-        msg!("=== TEST ORACLE READING ===");
-        
-        let oracle_account_data = ctx.accounts.oracle_state.try_borrow_data()?;
-        msg!("DEBUG: Oracle account data length: {}", oracle_account_data.len());
-        
-        require!(oracle_account_data.len() >= 24, ErrorCode::InvalidOracleData);
-        msg!("DEBUG: Has sufficient data");
-        
-        let trend_value = u64::from_le_bytes(oracle_account_data[8..16].try_into().unwrap());
-        let last_update = i64::from_le_bytes(oracle_account_data[16..24].try_into().unwrap());
-        
-        msg!("DEBUG: Success! trend_value: {}, last_update: {}", trend_value, last_update);
-        
-        Ok(())
-    }
-
-    pub fn test_pyth_reading(ctx: Context<TestPyth>) -> Result<()> {
-        msg!("=== TEST PYTH READING ===");
-        
-        let pyth_account = &ctx.accounts.pyth_price_account;
-        msg!("DEBUG: Pyth account key: {}", pyth_account.key());
-
-        let price_feed: PriceFeed = SolanaPriceAccount::account_info_to_feed(pyth_account)
-            .map_err(|e: PythError| {
-                msg!("Pyth error: {:?}", e);
-                ErrorCode::PythError
-            })?;
-        msg!("DEBUG: Pyth feed loaded successfully");
-
-        let clock = Clock::get()?;
-        let current_price_opt: Option<Price> = Some(price_feed.get_price_unchecked());
-        
-        match current_price_opt {
-            Some(price) => {
-                msg!("DEBUG: Pyth price: {:?}", price);
-                msg!("DEBUG: Pyth reading SUCCESS");
-                Ok(())
-            },
-            None => {
-                msg!("DEBUG: Stale Pyth price");
-                Err(ErrorCode::StaleOraclePrice.into())
-            }
-        }
-    }
-
-    pub fn update_pyth_feed(
-        ctx: Context<UpdateOracles>,
-        new_zbtc_pyth_feed: Pubkey,
-    ) -> Result<()> {
-        let config = &mut ctx.accounts.config;
-        
-        // Only squad multisig can update
-        require!(
-            ctx.accounts.squad_multisig.key() == config.squad_multisig,
-            ErrorCode::Unauthorized
-        );
-
-        config.authorized_zbtc_pyth_feed = new_zbtc_pyth_feed;
-        
-        // emit!(OraclesUpdated {
-        //     zbtc_pyth_feed: new_zbtc_pyth_feed,
-        //     sbtc_oracle: new_sbtc_oracle,
-        //     updated_by: ctx.accounts.squad_multisig.key(),
-        //     timestamp: Clock::get()?.unix_timestamp,
-        // });
-        
-        Ok(())
-    }
-
 }
 
 // ========================= Accounts / PDAs ================================
@@ -583,12 +511,10 @@ pub mod otc_swap {
 pub struct Initialize<'info> {
     #[account(mut)]
     pub squad_multisig: Signer<'info>,
-    
-    // sBTC mint (pre-created, authority will be transferred)
+
     #[account(mut)]
     pub sbtc_mint: Account<'info, Mint>,
-    
-    // zBTC mint (already exists)
+
     pub zbtc_mint: Account<'info, Mint>,
     
     /// CHECK: PDA that will become sBTC mint authority
@@ -603,21 +529,18 @@ pub struct Initialize<'info> {
     #[account(seeds = [b"fee_auth_v1", squad_multisig.key().as_ref()], bump)]
     pub fee_authority_pda: UncheckedAccount<'info>,
 
-    // Treasury vault - token account whose authority is treasury_authority_pda
     #[account(
         token::mint = zbtc_mint,
         token::authority = treasury_authority_pda,
     )]
     pub treasury_zbtc_vault: Account<'info, TokenAccount>,
-    
-    // Fee vault - token account whose authority is fee_authority_pda
+
     #[account(
         token::mint = zbtc_mint,
         token::authority = fee_authority_pda,
     )]
     pub fee_vault: Account<'info, TokenAccount>,
-    
-    // Config PDA
+
     #[account(
         init_if_needed,
         payer = squad_multisig,
@@ -626,7 +549,7 @@ pub struct Initialize<'info> {
         bump
     )]
     pub config: Account<'info, Config>,
-    
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
@@ -636,11 +559,9 @@ pub struct MintSbtc<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
-    /// The same squad_multisig used at `initialize` (NOT a signer here)
     /// CHECK: must match config.squad_multisig
     pub squad_multisig: UncheckedAccount<'info>,
 
-    // Config PDA derived from squad_multisig
     #[account(
         mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
@@ -649,14 +570,11 @@ pub struct MintSbtc<'info> {
     )]
     pub config: Box<Account<'info, Config>>,
 
-    // zBTC mint
     pub zbtc_mint: Box<Account<'info, Mint>>,
 
-    // sBTC mint
     #[account(mut)]
     pub sbtc_mint: Box<Account<'info, Mint>>,
 
-    // User token account
     #[account(
         mut, 
         constraint = user_zbtc_account.mint == zbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -664,15 +582,13 @@ pub struct MintSbtc<'info> {
     )]
     pub user_zbtc_account: Box<Account<'info, TokenAccount>>,
 
-    // User token account
     #[account(
         mut, 
         constraint = user_sbtc_account.mint == sbtc_mint.key() @ ErrorCode::InvalidTokenMint,
         constraint = user_sbtc_account.owner == user.key() @ ErrorCode::InvalidTokenOwner,
     )]
     pub user_sbtc_account: Box<Account<'info, TokenAccount>>,
-    
-    // Treasury vault
+
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -681,7 +597,6 @@ pub struct MintSbtc<'info> {
     )]
     pub treasury_zbtc_vault: Box<Account<'info, TokenAccount>>,
 
-    // Fee vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -689,7 +604,7 @@ pub struct MintSbtc<'info> {
         constraint = fee_vault.key() == config.fee_vault @ ErrorCode::InvalidFeeVault,
     )]
     pub fee_vault: Box<Account<'info, TokenAccount>>,
-    
+
     /// CHECK: PDA for sBTC mint authority
     #[account(
         seeds = [b"sbtc_mint_authority", squad_multisig.key().as_ref()], 
@@ -725,28 +640,22 @@ pub struct BurnSbtc<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
-    /// The multisig used as the seed for config/treasury/fees (does not need to be a signer here)
-    /// Supply the same squad_multisig that was used during initialize
     /// CHECK: same squad_multisig
     pub squad_multisig: UncheckedAccount<'info>,
 
-    // Config PDA derived from squad_multisig
     #[account(
-        mut, // need mut to update total_sbtc_outstanding
+        mut,
         seeds = [b"config_v1", squad_multisig.key().as_ref()],
         bump = config.bump,
         constraint = config.squad_multisig == squad_multisig.key() @ ErrorCode::InvalidSquadMultisig,
     )]
     pub config: Box<Account<'info, Config>>,
 
-    // zBTC mint
     pub zbtc_mint: Box<Account<'info, Mint>>,
 
-    // sBTC mint
     #[account(mut)]
     pub sbtc_mint: Box<Account<'info, Mint>>,
 
-    // User token account
     #[account(
         mut,
         constraint = user_zbtc_account.mint == zbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -754,7 +663,6 @@ pub struct BurnSbtc<'info> {
     )]
     pub user_zbtc_account: Box<Account<'info, TokenAccount>>,
 
-    // User token account
     #[account(
         mut,
         constraint = user_sbtc_account.mint == sbtc_mint.key() @ ErrorCode::InvalidTokenMint,
@@ -762,7 +670,6 @@ pub struct BurnSbtc<'info> {
     )]
     pub user_sbtc_account: Box<Account<'info, TokenAccount>>,
 
-    // Treasury vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -771,7 +678,6 @@ pub struct BurnSbtc<'info> {
     )]
     pub treasury_zbtc_vault: Box<Account<'info, TokenAccount>>,
 
-    // Fee vault
     #[account(
         mut,
         token::mint = zbtc_mint,
@@ -822,36 +728,6 @@ pub struct Config {
     pub authorized_zbtc_pyth_feed: Pubkey,
     pub authorized_sbtc_oracle_state_pda: Pubkey,
 }
-
-#[account]
-pub struct OracleState {
-    pub trend_value: u64,
-    pub last_update: i64,
-}
-
-#[derive(Accounts)]
-pub struct TestOracle<'info> {
-    /// CHECK: We're manually deserializing this account
-    pub oracle_state: AccountInfo<'info>,
-}
-
-#[derive(Accounts)]
-pub struct TestPyth<'info> {
-    /// CHECK: price account for the oracle (Pyth-style)
-    pub pyth_price_account: AccountInfo<'info>,
-}
-
-#[derive(Accounts)]
-pub struct UpdateOracles<'info> {
-    #[account(
-        mut, 
-        seeds = [b"config_v1", squad_multisig.key().as_ref()], 
-        bump = config.bump
-    )]
-    pub config: Account<'info, Config>,
-    
-    pub squad_multisig: Signer<'info>,
-}
 // ========================= Events ================================
 #[event]
 pub struct InitializedEvent {
@@ -894,8 +770,6 @@ pub struct BurnEvent {
 // ========================= Errors ================================
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Unauthorized")]
-    Unauthorized,
     #[msg("Fee rate must be 5% or less")]
     InvalidFeeRate,
     #[msg("Collateral ratio must be at least 10%")]
