@@ -1,8 +1,8 @@
 # LetsDAT OTC Swap Program
 
 Otc Swap program written using the Anchor framework.
-A user can interact with this program to swap zBTC (Zeus-BTC) for sBTC (Synthetic BTC).
-The swap price is computed via a Pyth oracle tracking the 1000SMA BTC index, combined with additional regularization terms.
+A user can interact with this program to swap zBTC (Zeus-BTC) for sBTC (Stable BTC).
+The sBTC price is computed via a Pyth oracle tracking the 1000SMA BTC index, combined with additional regularization terms.
 
 There are two primary swap functionalities:
 
@@ -58,7 +58,7 @@ app/
 | Token                    | Description                                                                                                                                                                                     |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **zBTC (Zeus BTC)**      | Wrapped BTC on Solana, used as collateral.                                                                                                                                                      |
-| **sBTC (Synthetic BTC)** | A minted token whose price follows the **sBTC Oracle PDA** (not the market BTC price directly). The oracle defines its "synthetic" target value (e.g., a smoothed or index-adjusted BTC price). |
+| **sBTC (stable BTC)** | A minted token whose price follows the **sBTC Oracle PDA** (not the market BTC price directly). The oracle defines its  target value (e.g., a smoothed or index-adjusted BTC price). |
 ```
 
 
