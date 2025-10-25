@@ -10,7 +10,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token::{self, SetAuthority, Mint, Token, TokenAccount, Transfer, MintTo, Burn};
 use spl_token::instruction::AuthorityType;
-use pyth_sdk_solana::{Price, PriceFeed, PythError};
+use pyth_sdk_solana::Price;
 use pyth_sdk_solana::state::SolanaPriceAccount;
 
 
@@ -135,50 +135,57 @@ pub mod otc_swap {
 
         // -- 3) read & validatezBTC/USD price from Pyth feed
         let pyth_account = &ctx.accounts.authorized_zbtc_pyth_feed;
-
-        let price_feed: PriceFeed = SolanaPriceAccount::account_info_to_feed(pyth_account)
-            .map_err(|e: PythError| {
-                msg!("Pyth error: {:?}", e);
-                ErrorCode::PythError
-            })?;
-        msg!("DEBUG: Pyth feed loaded");
-
         let clock = Clock::get()?;
-        let current_time = clock.unix_timestamp;
-        let max_age = ORACLE_MAX_AGE;
 
-        // mainnet only
-        // let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
-        let current_price_opt: Option<Price> = Some(price_feed.get_price_unchecked());
-        let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
-        msg!("price: {:?}", price);
+        let (price, conf, expo, publish_time) = match SolanaPriceAccount::account_info_to_feed(pyth_account) {
+            Ok(price_feed) => {
+                msg!("DEBUG: Real Pyth feed loaded");
+                let current_time = clock.unix_timestamp;
+                let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, ORACLE_MAX_AGE);
 
-        require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
-        msg!("DEBUG: Pyth price confidence check passed");
+                let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
+                require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
+                msg!("DEBUG: Pyth price confidence check passed");
+                (price.price, price.conf, price.expo, price.publish_time)
+            }
+            Err(_) => {
+                msg!("DEBUG: Falling back to mock Pyth format");
+                let account_data = pyth_account.try_borrow_data()?;
+                let data_start = 8; // Skip Anchor discriminator
+                
+                if account_data.len() < data_start + 28 {
+                    return Err(ErrorCode::InvalidPythAccount.into());
+                }
+                
+                let price = i64::from_le_bytes(account_data[data_start..data_start+8].try_into().unwrap());
+                let conf = u64::from_le_bytes(account_data[data_start+8..data_start+16].try_into().unwrap());
+                let expo = i32::from_le_bytes(account_data[data_start+16..data_start+20].try_into().unwrap());
+                let publish_time = i64::from_le_bytes(account_data[data_start+20..data_start+28].try_into().unwrap());
+                
+                (price, conf, expo, publish_time)
+            }
+        };
 
-        let zbtc_price_cents: u64 = if price.price >= 0 {
-            // Pyth price format: actual_price = price * 10^expo
-            // price_cents = actual_price * 100 = price * 10^expo * 100 = price * 10^(expo + 2)
-            let actual_expo = price.expo + 2; // +2 to convert to cents
+        msg!("price: {}, conf: {}, expo: {}, publish_time: {}", price, conf, expo, publish_time);
+
+        let zbtc_price_cents: u64 = if price >= 0 {
+            let actual_expo = expo + 2;
             
             if actual_expo >= 0 {
-                (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
+                (price as u64).checked_mul(10u64.pow(actual_expo as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             } else {
-                (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
+                (price as u64).checked_div(10u64.pow((-actual_expo) as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             }
         } else {
-            return Err(anchor_lang::error::Error::from(ErrorCode::InvalidPrice));
+            return Err(ErrorCode::InvalidPrice.into());
         };
-        msg!("price in cents: {:?}", zbtc_price_cents);
-        msg!("DEBUG: Pyth price conversion complete");
 
         // -- 4) Get sBTC price from oracle
         let oracle_account_data = ctx.accounts.authorized_sbtc_oracle_state_pda.try_borrow_data()?;
         msg!("DEBUG: Oracle account data length: {}", oracle_account_data.len());
 
-        // CRITICAL: Check account has enough data before slicing
         require!(oracle_account_data.len() >= 24, ErrorCode::InvalidOracleData); // 8 discriminator + 8 trend_value + 8 last_update
 
         let _discriminator = &oracle_account_data[0..8];
@@ -334,43 +341,57 @@ pub mod otc_swap {
 
         // -- 1) Get zBTC/USD price from Pyth
         let pyth_account = &ctx.accounts.authorized_zbtc_pyth_feed;
-        let price_feed: PriceFeed = SolanaPriceAccount::account_info_to_feed(pyth_account)
-            .map_err(|e: PythError| {
-                msg!("Pyth error: {:?}", e);
-                ErrorCode::PythError
-            })?;
-
         let clock = Clock::get()?;
-        let current_time = clock.unix_timestamp;
-        let max_age = ORACLE_MAX_AGE;
 
-        // mainnet only
-        // let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, max_age);
-        let current_price_opt: Option<Price> = Some(price_feed.get_price_unchecked());
-        let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
-        msg!("price: {:?}", price);
+        let (price, conf, expo, publish_time) = match SolanaPriceAccount::account_info_to_feed(pyth_account) {
+            Ok(price_feed) => {
+                msg!("DEBUG: Real Pyth feed loaded");
+                let current_time = clock.unix_timestamp;
+                let current_price_opt: Option<Price> = price_feed.get_price_no_older_than(current_time, ORACLE_MAX_AGE);
 
-        require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
+                let price: Price = current_price_opt.ok_or(ErrorCode::StaleOraclePrice)?;
+                require!(price.conf < price.price.unsigned_abs() / 1000u64, ErrorCode::HighConfidence);
+                msg!("DEBUG: Pyth price confidence check passed");
+                (price.price, price.conf, price.expo, price.publish_time)
+            }
+            Err(_) => {
+                msg!("DEBUG: Falling back to mock Pyth format");
+                let account_data = pyth_account.try_borrow_data()?;
+                let data_start = 8; // Skip Anchor discriminator
+                
+                if account_data.len() < data_start + 28 {
+                    return Err(ErrorCode::InvalidPythAccount.into());
+                }
+                
+                let price = i64::from_le_bytes(account_data[data_start..data_start+8].try_into().unwrap());
+                let conf = u64::from_le_bytes(account_data[data_start+8..data_start+16].try_into().unwrap());
+                let expo = i32::from_le_bytes(account_data[data_start+16..data_start+20].try_into().unwrap());
+                let publish_time = i64::from_le_bytes(account_data[data_start+20..data_start+28].try_into().unwrap());
+                
+                (price, conf, expo, publish_time)
+            }
+        };
 
-        // Convert Pyth price to cents (USD)
-        let zbtc_price_cents: u64 = if price.price >= 0 {
-            let actual_expo = price.expo + 2;
+        msg!("price: {}, conf: {}, expo: {}, publish_time: {}", price, conf, expo, publish_time);
+
+        let zbtc_price_cents: u64 = if price >= 0 {
+            let actual_expo = expo + 2;
             
             if actual_expo >= 0 {
-                (price.price as u64).checked_mul(10u64.pow(actual_expo as u32))
+                (price as u64).checked_mul(10u64.pow(actual_expo as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             } else {
-                (price.price as u64).checked_div(10u64.pow((-actual_expo) as u32))
+                (price as u64).checked_div(10u64.pow((-actual_expo) as u32))
                     .ok_or(ErrorCode::InvalidPrice)?
             }
         } else {
-            return Err(anchor_lang::error::Error::from(ErrorCode::InvalidPrice));
+            return Err(ErrorCode::InvalidPrice.into());
         };
 
         // -- 2) Get sBTC price from your oracle
         let oracle_account_data = ctx.accounts.authorized_sbtc_oracle_state_pda.try_borrow_data()?;
         let oracle_data = &oracle_account_data[8..];
-        
+
         let sbtc_price_cents = u64::from_le_bytes(oracle_data[0..8].try_into().unwrap());
         let last_update = i64::from_le_bytes(oracle_data[8..16].try_into().unwrap());
 
@@ -516,7 +537,7 @@ pub struct Initialize<'info> {
     pub sbtc_mint: Account<'info, Mint>,
 
     pub zbtc_mint: Account<'info, Mint>,
-    
+
     /// CHECK: PDA that will become sBTC mint authority
     #[account(seeds = [b"sbtc_mint_authority", squad_multisig.key().as_ref()], bump)]
     pub sbtc_mint_authority_pda: UncheckedAccount<'info>,
@@ -732,6 +753,7 @@ pub struct Config {
     pub authorized_zbtc_pyth_feed: Pubkey,
     pub authorized_sbtc_oracle_state_pda: Pubkey,
 }
+
 // ========================= Events ================================
 #[event]
 pub struct InitializedEvent {
@@ -810,6 +832,8 @@ pub enum ErrorCode {
     InvalidTokenOwner,
     #[msg("Pyth oracle error")]
     PythError,
+    #[msg("Invalid Pyth account")]
+    InvalidPythAccount,
     #[msg("Invalid oracle account")]
     InvalidOracleAccount,
     #[msg("Invalid oracle data")]

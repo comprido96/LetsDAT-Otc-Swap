@@ -10,6 +10,5 @@ yarn.lock
 .env.local
 
 programs/sbtc-oracle
-programs/mock-pyth
 notes.txt
 tests/xp-test.ts
